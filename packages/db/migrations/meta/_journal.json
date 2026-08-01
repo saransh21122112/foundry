@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1785266798615,
+      "tag": "0000_overconfident_tenebrous",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785269906454,
+      "tag": "0001_abandoned_mister_sinister",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785609028254,
+      "tag": "0002_abandoned_master_chief",
+      "breakpoints": true
+    }
+  ]
+}

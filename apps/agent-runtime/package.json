@@ -1,0 +1,37 @@
+{
+  "name": "@foundry/agent-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#*": "./agent/*",
+    "#evals/*": "./evals/*"
+  },
+  "scripts": {
+    "build": "eve build",
+    "dev": "eve dev",
+    "start": "eve start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clerk/backend": "^3.13.2",
+    "@foundry/db": "*",
+    "@foundry/guardrails": "*",
+    "@vercel/connect": "0.4.2",
+    "ai": "^7.0.38",
+    "eve": "^0.27.10",
+    "resend": "^6.18.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.x",
+    "microsandbox": "^0.5.10",
+    "typescript": "^5.6.0"
+  },
+  "overrides": {
+    "ai": "^7.0.38"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

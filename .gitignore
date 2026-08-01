@@ -1,0 +1,11 @@
+node_modules/
+.next/
+dist/
+.eve/
+.output/
+.env
+.env.local
+.turbo/
+*.log
+.DS_Store
+apps/web/tsconfig.tsbuildinfo

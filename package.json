@@ -1,0 +1,23 @@
+{
+  "name": "foundry",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "npm@11.16.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,1 @@
+ALTER TABLE "approval_requests" ADD COLUMN "eve_call_id" text;

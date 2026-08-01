@@ -1,0 +1,622 @@
+/* ===========================================================================
+   Foundry design tokens
+   The name is the brief: a foundry forges raw material under controlled
+   heat. Autonomy level *is* the heat this product's departments are allowed
+   to run at — off (cold), draft_only (warming), bounded_autonomous (hot).
+   That mapping drives the palette and the AutonomyGauge signature element;
+   everything else stays quiet around it.
+   ========================================================================= */
+
+:root {
+  --ink: #16151a; /* page background — oxidized steel */
+  --surface: #201f26; /* panel/card background */
+  --surface-2: #2a2830; /* nested/hover surface */
+  --line: #37343d; /* hairline borders */
+
+  --paper: #edeae3; /* primary text — warm off-white */
+  --iron: #8b877e; /* muted text */
+  --iron-dim: #625f5a; /* faint text, placeholders */
+
+  --ember: #f2843d; /* molten accent — primary actions, "warming" */
+  --ember-hot: #e5484d; /* danger — irreversible/financial/legal, "hot" */
+  --cool: #3ed9b0; /* success/executed, "cold/safe" reads as off-state too */
+  --cold: #5b7a94; /* off / inactive gauge state */
+
+  --font-display: var(--font-space-grotesk), "Space Grotesk", ui-sans-serif, sans-serif;
+  --font-body: var(--font-inter), "Inter", ui-sans-serif, sans-serif;
+  --font-mono: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, monospace;
+
+  --radius: 3px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.5em;
+}
+
+a {
+  color: var(--ember);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* --- Layout shell -------------------------------------------------------- */
+
+.shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.rail {
+  width: 216px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: 0.02em;
+  color: var(--paper);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wordmark::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  background: var(--ember);
+  border-radius: 50%;
+  box-shadow: 0 0 8px 1px var(--ember);
+  flex-shrink: 0;
+}
+
+.rail-nav {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rail-nav a {
+  display: block;
+  color: var(--iron);
+  font-size: 13px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+}
+.rail-nav small {
+  display: block;
+  font-family: var(--font-body);
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 11px;
+  color: var(--iron-dim);
+  margin-top: 2px;
+}
+.rail-nav a[aria-current="page"] small {
+  color: color-mix(in srgb, var(--ink) 70%, transparent);
+}
+.rail-nav a:hover {
+  color: var(--paper);
+  background: var(--surface-2);
+  text-decoration: none;
+}
+.rail-nav a[aria-current="page"] {
+  color: var(--ink);
+  background: var(--ember);
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  padding: 40px 48px;
+  max-width: 1100px;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    flex-direction: column;
+  }
+  .rail {
+    width: auto;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    padding: 16px;
+  }
+  .rail-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .rail > div {
+    margin-top: 0 !important;
+    margin-left: auto;
+  }
+  .main {
+    padding: 24px 20px;
+  }
+  .hero {
+    padding: 40px 20px;
+  }
+  table,
+  thead,
+  tbody,
+  tr {
+    display: block;
+  }
+  th {
+    display: none;
+  }
+  td {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: none;
+    padding: 4px 0;
+  }
+  tr {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--iron);
+  margin: 0 0 6px;
+}
+
+.lede {
+  color: var(--iron);
+  max-width: 62ch;
+  margin: 0 0 28px;
+}
+
+/* --- Components ------------------------------------------------------------ */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+
+.panel-empty {
+  color: var(--iron-dim);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--iron);
+  font-weight: 500;
+  padding: 0 12px 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+td {
+  padding: 12px 12px 12px 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+tr:last-child td {
+  border-bottom: none;
+}
+
+.btn {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: transparent;
+  color: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 7px 14px;
+  cursor: pointer;
+}
+.btn:hover {
+  border-color: var(--iron);
+  background: var(--surface-2);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--ember);
+  outline-offset: 2px;
+}
+.btn-approve {
+  border-color: var(--cool);
+  color: var(--cool);
+}
+.btn-approve:hover {
+  background: color-mix(in srgb, var(--cool) 12%, transparent);
+}
+.btn-reject {
+  border-color: var(--ember-hot);
+  color: var(--ember-hot);
+}
+.btn-reject:hover {
+  background: color-mix(in srgb, var(--ember-hot) 12%, transparent);
+}
+.btn-primary {
+  background: var(--ember);
+  border-color: var(--ember);
+  color: var(--ink);
+  font-weight: 600;
+}
+.btn-primary:hover {
+  background: color-mix(in srgb, var(--ember) 85%, white);
+}
+
+input[type="text"],
+input[type="email"],
+input[type="number"],
+select {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--ink);
+  color: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+}
+textarea {
+  width: 100%;
+  resize: vertical;
+  line-height: 1.5;
+  font-family: var(--font-body);
+  font-size: 14px;
+  background: var(--ink);
+  color: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--ember);
+  outline-offset: 1px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--iron);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.field-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  color: var(--iron);
+}
+.badge-risk-financial,
+.badge-risk-legal,
+.badge-risk-irreversible {
+  border-color: var(--ember-hot);
+  color: var(--ember-hot);
+}
+.badge-risk-reversible-high {
+  border-color: var(--ember);
+  color: var(--ember);
+}
+.badge-risk-reversible-low {
+  border-color: var(--cool);
+  color: var(--cool);
+}
+
+/* --- Autonomy gauge: the signature element ---------------------------------
+   A 3-segment heat readout for off / draft_only / bounded_autonomous. This
+   is the one place the design allows itself real color intensity — it's
+   literally rendering the autonomy_level enum, not decorating the page. */
+
+.gauge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--iron);
+}
+.gauge-track {
+  display: flex;
+  gap: 3px;
+}
+.gauge-seg {
+  width: 16px;
+  height: 6px;
+  border-radius: 1px;
+  background: var(--line);
+}
+.gauge[data-level="off"] .gauge-seg:nth-child(1) {
+  background: var(--cold);
+}
+.gauge[data-level="draft_only"] .gauge-seg:nth-child(1),
+.gauge[data-level="draft_only"] .gauge-seg:nth-child(2) {
+  background: var(--ember);
+}
+.gauge[data-level="bounded_autonomous"] .gauge-seg {
+  background: var(--ember-hot);
+  box-shadow: 0 0 6px 0 color-mix(in srgb, var(--ember-hot) 60%, transparent);
+}
+
+/* --- Homepage ------------------------------------------------------------ */
+
+.hero {
+  padding: 64px 48px;
+  max-width: 720px;
+}
+.hero h1 {
+  font-size: 40px;
+}
+.hero-nav {
+  list-style: none;
+  margin: 32px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.hero-nav a {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  background: var(--surface);
+  color: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.hero-nav a:hover {
+  background: var(--surface-2);
+  text-decoration: none;
+  color: var(--ember);
+}
+.hero-nav small {
+  display: block;
+  font-family: var(--font-body);
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 12px;
+  color: var(--iron);
+  margin-top: 3px;
+}
+.hero-nav a::after {
+  content: "→";
+  color: var(--iron);
+}
+
+/* --- Run a task ----------------------------------------------------------- */
+
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.transcript-entry-you .transcript-label {
+  color: var(--paper);
+}
+.transcript-entry-system .transcript-label {
+  color: var(--iron);
+}
+.transcript-entry-agent .transcript-label {
+  color: var(--ember);
+}
+.transcript-entry-pending .transcript-label {
+  color: var(--ember-hot);
+}
+.transcript-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 3px;
+  display: block;
+}
+.transcript-body {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.callout {
+  border: 1px solid var(--ember);
+  background: color-mix(in srgb, var(--ember) 8%, var(--surface));
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 20px;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.pulse-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ember);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* --- Run a task: two-column layout + task sidebar --------------------------- */
+
+.run-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+}
+.run-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 40px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+}
+.task-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.task-list-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 2px solid transparent;
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.task-list-item:hover {
+  background: var(--surface-2);
+  border-color: var(--iron);
+}
+.task-list-item.active {
+  border-left-color: var(--ember);
+  background: var(--surface-2);
+}
+.task-list-title {
+  font-size: 13px;
+  color: var(--paper);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.task-list-item.active .task-list-title {
+  color: var(--ember);
+}
+.task-list-time {
+  font-size: 11px;
+  color: var(--iron-dim);
+}
+
+@media (max-width: 960px) {
+  .run-layout {
+    flex-direction: column;
+  }
+  .task-sidebar {
+    width: 100%;
+    position: static;
+    max-height: none;
+  }
+}
+
+/* --- Page transitions -------------------------------------------------------- */
+
+@keyframes page-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.page-transition {
+  animation: page-fade-in 0.18s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-transition {
+    animation: none;
+  }
+}
