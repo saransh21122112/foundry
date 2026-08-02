@@ -4,19 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
-
-const NAV = [
-  { href: "/dashboard/onboarding", label: "Get set up", blurb: "First-run setup" },
-  { href: "/dashboard/run", label: "Run a task", blurb: "Give your company something to do" },
-  { href: "/dashboard/approvals", label: "Approvals", blurb: "Say yes or no" },
-  { href: "/dashboard/kill-switch", label: "Kill switch", blurb: "Emergency stop, org-wide or per department" },
-  { href: "/dashboard/departments", label: "Departments", blurb: "Turn agents on, set how free they are" },
-  { href: "/dashboard/prompts", label: "Agent prompts", blurb: "Edit what each agent is told to do" },
-  { href: "/dashboard/budgets", label: "Budgets", blurb: "Spending limits" },
-  { href: "/dashboard/connections", label: "Connections", blurb: "Outbound webhooks (Slack/Discord/Zapier)" },
-  { href: "/dashboard/tools", label: "Tool allowlist", blurb: "Turn off one specific action" },
-  { href: "/dashboard/activity", label: "Activity", blurb: "Everything that's happened" },
-];
+import { NAV } from "@/lib/nav";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
