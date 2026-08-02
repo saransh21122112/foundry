@@ -1,4 +1,4 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import {
   db,
   activityLog,
@@ -7,12 +7,94 @@ import {
   departmentConfigs,
   departmentSettings,
   killSwitches,
+  memberships,
   toolAllowlists,
 } from "@foundry/db";
+import { createClerkClient } from "@clerk/backend";
+import { Resend } from "resend";
 import type { GuardrailDeps } from "./types.js";
+import { computeBudgetDecision } from "./budget-decision.js";
 
 const DEFAULT_RATE_LIMIT_WINDOW_MINUTES = 60;
 const DEFAULT_RATE_LIMIT_MAX_CALLS = 20;
+
+// Not declared in this package's own package.json — resolved from
+// apps/agent-runtime's node_modules via npm workspace hoisting (verified:
+// `require.resolve("resend", { paths: [".../packages/guardrails/src"] })`
+// finds the hoisted root copy). Only ever executed inside the agent-runtime
+// process, same as everything else in this file.
+const resend = new Resend(process.env.RESEND_API_KEY);
+const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+
+/**
+ * Mirrors apps/web/lib/copy.ts's approvalReasonLabel. Duplicated rather than
+ * imported — guardrails is a package apps/web depends on, not the reverse.
+ * Keep wording in sync if either changes.
+ */
+const APPROVAL_REASON_LABEL: Record<string, string> = {
+  draft_mode: "This department is set to “Drafts only,” so this needed your OK before it could run.",
+  budget_exceeded: "This would go over the budget cap you've set for this department.",
+  not_in_allowlist: "This specific action is turned off for this department.",
+  rate_limit_exceeded: "This department has hit its rate limit for this action — too many, too fast.",
+};
+function approvalReasonLabel(reason: string): string {
+  if (reason.startsWith("hard_rule:")) {
+    const risk = reason.slice("hard_rule:".length);
+    return `This action is ${risk} — those always need your OK, no matter what autonomy level is set.`;
+  }
+  return APPROVAL_REASON_LABEL[reason] ?? reason;
+}
+
+/**
+ * Best-effort email to every owner/admin of the org, once a tool call has
+ * hard-paused waiting for approval. A notification failure must never break
+ * approval-request creation itself, so every failure mode here is caught and
+ * logged rather than thrown — see createApprovalRequest below.
+ */
+async function notifyAdminsOfApproval(input: {
+  orgId: string;
+  department: string;
+  toolName: string;
+  reason: string;
+}): Promise<void> {
+  const admins = await db
+    .select({ clerkUserId: memberships.clerkUserId })
+    .from(memberships)
+    .where(and(eq(memberships.orgId, input.orgId), inArray(memberships.role, ["owner", "admin"])));
+
+  if (admins.length === 0) {
+    console.warn(`[guardrails] approval request for org ${input.orgId} has no owner/admin to notify`);
+    return;
+  }
+
+  // apps/agent-runtime can't read Next's NEXT_PUBLIC_ vars, so it gets its
+  // own APP_URL. TODO: this needs to become the real production URL once
+  // deployed.
+  const appUrl = process.env.APP_URL ?? "http://localhost:3311";
+  const reasonLabel = approvalReasonLabel(input.reason);
+
+  let sent = 0;
+  for (const { clerkUserId } of admins) {
+    const user = await clerk.users.getUser(clerkUserId);
+    const email =
+      user.emailAddresses.find((addr) => addr.id === user.primaryEmailAddressId)?.emailAddress ??
+      user.emailAddresses[0]?.emailAddress;
+    if (!email) continue;
+
+    const { error } = await resend.emails.send({
+      from: "Foundry <onboarding@resend.dev>",
+      to: email,
+      subject: `Foundry: ${input.department} needs your approval`,
+      text: `${input.toolName} needs your approval.\n\n${reasonLabel}\n\nReview it here: ${appUrl}/dashboard/approvals`,
+    });
+    if (error) {
+      console.warn(`[guardrails] approval notification to ${email} failed: ${error.message}`);
+      continue;
+    }
+    sent++;
+  }
+  console.log(`[guardrails] approval notification sent to ${sent}/${admins.length} admins (org ${input.orgId})`);
+}
 
 /**
  * Real, Postgres-backed implementation of GuardrailDeps. Exercised against
@@ -83,44 +165,40 @@ export const dbDeps: GuardrailDeps = {
       .where(
         and(
           eq(budgetCaps.orgId, orgId),
-          eq(budgetCaps.department, department),
           eq(budgetCaps.unit, cost.unit),
+          // Both the department-specific cap(s) AND any org-wide cap
+          // (department IS NULL) apply to this call — same null-is-org-wide
+          // convention as kill_switches. Every applicable row is checked
+          // before any is written, and every applicable row's spend is
+          // incremented on success, same as the existing per-scope loop below.
+          sql`(${budgetCaps.department} IS NULL OR ${budgetCaps.department} = ${department})`,
         ),
       );
     if (rows.length === 0) return { withinBudget: true }; // no cap configured = uncapped
 
-    const now = Date.now();
-    const DAY_MS = 24 * 60 * 60 * 1000;
-    const MONTH_MS = 30 * DAY_MS;
+    const decision = computeBudgetDecision(
+      rows.map((row) => ({
+        id: row.id,
+        department: row.department,
+        scope: row.scope as "per_run" | "daily" | "monthly",
+        unit: row.unit,
+        capAmount: Number(row.capAmount),
+        periodStart: new Date(row.periodStart),
+        currentSpend: Number(row.currentSpend),
+      })),
+      cost,
+      new Date(),
+    );
+    if (decision.verdict === "deny") return { withinBudget: false };
 
-    // For each cumulative row, compute its rollover-adjusted effective spend
-    // (0 if its period has elapsed, else its stored currentSpend) without
-    // mutating the row yet — every row must be checked before any is written.
-    const effective = rows.map((row) => {
-      if (row.scope === "per_run") {
-        return { row, rolledOver: false, currentSpend: 0 };
-      }
-      const windowMs = row.scope === "daily" ? DAY_MS : MONTH_MS;
-      const rolledOver = now - new Date(row.periodStart).getTime() > windowMs;
-      return { row, rolledOver, currentSpend: rolledOver ? 0 : Number(row.currentSpend) };
-    });
-
-    for (const { row, currentSpend } of effective) {
-      const projected = row.scope === "per_run" ? cost.amount : currentSpend + cost.amount;
-      if (projected > Number(row.capAmount)) {
-        return { withinBudget: false };
-      }
-    }
-
-    for (const { row, rolledOver, currentSpend } of effective) {
-      if (row.scope === "per_run") continue; // not cumulative, never persisted
+    for (const update of decision.updates) {
       await db
         .update(budgetCaps)
         .set({
-          currentSpend: String(currentSpend + cost.amount),
-          ...(rolledOver ? { periodStart: new Date(now) } : {}),
+          currentSpend: String(update.currentSpend),
+          ...(update.periodStart ? { periodStart: update.periodStart } : {}),
         })
-        .where(eq(budgetCaps.id, row.id));
+        .where(eq(budgetCaps.id, update.id));
     }
     return { withinBudget: true };
   },
@@ -179,6 +257,18 @@ export const dbDeps: GuardrailDeps = {
         reason: input.reason,
       })
       .returning({ id: approvalRequests.id });
+
+    try {
+      await notifyAdminsOfApproval({
+        orgId: input.orgId,
+        department: input.department,
+        toolName: input.toolName,
+        reason: input.reason,
+      });
+    } catch (err) {
+      console.warn("[guardrails] failed to notify admins of approval request:", err);
+    }
+
     return { id: row.id };
   },
 

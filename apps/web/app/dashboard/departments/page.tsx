@@ -4,7 +4,7 @@ import { db, departmentConfigs, ensureOrganization } from "@foundry/db";
 import { AUTONOMY_LEVELS, DEPARTMENTS, type AutonomyLevel } from "@foundry/shared-types";
 import { AutonomyGauge } from "@/components/AutonomyGauge";
 import { AUTONOMY_DESCRIPTION, AUTONOMY_LABEL, DEPARTMENT_BLURB } from "@/lib/copy";
-import { updateDepartmentConfig } from "./actions";
+import { DepartmentForm } from "./DepartmentForm";
 
 export default async function DepartmentsPage() {
   const { orgId: clerkOrgId, orgSlug } = await auth();
@@ -38,7 +38,7 @@ export default async function DepartmentsPage() {
         const enabled = config?.enabled ?? false;
         return (
           <div className="panel" key={department}>
-            <form action={updateDepartmentConfig}>
+            <DepartmentForm>
               <input type="hidden" name="department" value={department} />
 
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -90,11 +90,7 @@ export default async function DepartmentsPage() {
                   </label>
                 ))}
               </div>
-
-              <button type="submit" className="btn btn-primary">
-                Save
-              </button>
-            </form>
+            </DepartmentForm>
           </div>
         );
       })}

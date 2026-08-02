@@ -260,6 +260,12 @@ td {
 tr:last-child td {
   border-bottom: none;
 }
+tr.row-failed {
+  background: color-mix(in srgb, var(--ember-hot) 10%, transparent);
+}
+tr.row-failed:hover {
+  background: color-mix(in srgb, var(--ember-hot) 16%, transparent);
+}
 
 .btn {
   font-family: var(--font-mono);

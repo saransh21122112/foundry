@@ -46,6 +46,7 @@ export const activityEventTypeEnum = pgEnum("activity_event_type", [
   "approval_granted",
   "approval_rejected",
   "kill_switch_triggered",
+  "kill_switch_resolved",
 ]);
 
 export const integrationStatusEnum = pgEnum("integration_status", [
@@ -71,6 +72,12 @@ export const organizations = pgTable("organizations", {
   slug: text("slug").notNull(),
   plan: text("plan").notNull().default("free"),
   status: text("status").notNull().default("active"),
+  // What this org's company actually does — optional, filled in during
+  // onboarding. Read by apps/agent-runtime/agent/lib/resolve-instructions.ts
+  // to ground every agent's prompt in this org's real business instead of
+  // generic "virtual AI company" boilerplate; nothing else reads these.
+  description: text("description"),
+  website: text("website"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   clerkOrgIdIdx: uniqueIndex("organizations_clerk_org_id_idx").on(t.clerkOrgId),
@@ -128,7 +135,12 @@ export const departmentSettings = pgTable("department_settings", {
 export const budgetCaps = pgTable("budget_caps", {
   id: uuid("id").primaryKey().defaultRandom(),
   orgId: uuid("org_id").notNull().references(() => organizations.id),
-  department: departmentEnum("department").notNull(),
+  // null department = whole-org cap, checked in addition to any per-department
+  // cap for the same unit — mirrors kill_switches' existing null-is-org-wide
+  // convention. The org-wide row is the real spend ceiling: it's the one
+  // that still catches a runaway org even if a customer never configures a
+  // single per-department cap (the previous default state was "uncapped").
+  department: departmentEnum("department"),
   scope: text("scope").notNull(), // per_run | daily | monthly
   unit: text("unit").notNull(), // usd | api_calls | emails_sent | ...
   capAmount: numeric("cap_amount", { precision: 12, scale: 4 }).notNull(),
@@ -195,7 +207,10 @@ export const approvalRequests = pgTable("approval_requests", {
 export const activityLog = pgTable("activity_log", {
   id: uuid("id").primaryKey().defaultRandom(),
   orgId: uuid("org_id").notNull().references(() => organizations.id),
-  department: departmentEnum("department").notNull(),
+  // null = an org-wide event (e.g. an org-wide kill switch trigger), same
+  // null-is-org-wide convention as kill_switches.department and
+  // budget_caps.department.
+  department: departmentEnum("department"),
   agentRunId: text("agent_run_id").notNull(),
   eventType: activityEventTypeEnum("event_type").notNull(),
   toolName: text("tool_name"),
@@ -229,6 +244,26 @@ export const runSessions = pgTable("run_sessions", {
   orgCreatedIdx: index("run_sessions_org_created_idx").on(t.orgId, t.createdAt),
 }));
 
+/**
+ * Per-org override of an agent's instructions.md. `agentId` matches the id
+ * scheme in apps/web/app/dashboard/prompts/agents.ts (e.g. "eng-lead",
+ * "swe-lead/backend-developer") — not a foreign key to anything, since the
+ * canonical agent list is defined in code, not data. No row for a given
+ * (orgId, agentId) = that org still gets the shared default file content;
+ * a row here is what turns the previously-shared-by-every-org prompt editor
+ * into a genuinely per-tenant one.
+ */
+export const agentPromptOverrides = pgTable("agent_prompt_overrides", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id),
+  agentId: text("agent_id").notNull(),
+  content: text("content").notNull(),
+  updatedByClerkUserId: text("updated_by_clerk_user_id").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgAgentIdx: uniqueIndex("agent_prompt_overrides_org_agent_idx").on(t.orgId, t.agentId),
+}));
+
 // ---------------------------------------------------------------------------
 // Integrations & kill switch
 // ---------------------------------------------------------------------------
@@ -236,10 +271,17 @@ export const runSessions = pgTable("run_sessions", {
 export const integrations = pgTable("integrations", {
   id: uuid("id").primaryKey().defaultRandom(),
   orgId: uuid("org_id").notNull().references(() => organizations.id),
-  provider: text("provider").notNull(), // gmail | slack | github | twitter | ...
+  provider: text("provider").notNull(), // gmail | slack | github | twitter | webhook | ...
   // Opaque pointer into Vercel Connect's own token storage. The raw OAuth
-  // token never lives in this table.
-  connectTokenRef: text("connect_token_ref").notNull(),
+  // token never lives in this table. Nullable: provider="webhook" (see
+  // `config` below) has no token at all, and no OAuth provider is wired up
+  // yet either.
+  connectTokenRef: text("connect_token_ref"),
+  // Provider-specific, non-secret config that isn't a token — e.g.
+  // provider="webhook" stores `{ url: string }` here (a customer-owned
+  // Slack/Discord/Zapier incoming-webhook URL, not something we consider
+  // a credential in the same sense as an OAuth token).
+  config: jsonb("config"),
   scopes: jsonb("scopes").notNull().default("[]"),
   connectedByClerkUserId: text("connected_by_clerk_user_id").notNull(),
   connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),

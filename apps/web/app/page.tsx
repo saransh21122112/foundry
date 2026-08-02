@@ -87,6 +87,10 @@ export default function HomePage() {
           </SignUpButton>
         </div>
       )}
+
+      <p className="lede" style={{ marginTop: 24 }}>
+        <Link href="/about">About Foundry &amp; how the guardrails work →</Link>
+      </p>
     </main>
   );
 }

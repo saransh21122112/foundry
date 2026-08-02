@@ -22,6 +22,34 @@
       "when": 1785609028254,
       "tag": "0002_abandoned_master_chief",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785620843781,
+      "tag": "0003_confused_slyde",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785621063736,
+      "tag": "0004_sturdy_the_fallen",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785621106364,
+      "tag": "0005_narrow_jocasta",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785658505776,
+      "tag": "0006_daffy_gunslinger",
+      "breakpoints": true
     }
   ]
 }

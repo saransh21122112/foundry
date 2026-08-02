@@ -58,7 +58,7 @@ export default async function BudgetsPage() {
                 const scopeLabel = SCOPES.find((s) => s.value === cap.scope)?.label ?? cap.scope;
                 return (
                   <tr key={cap.id}>
-                    <td className="mono">{cap.department}</td>
+                    <td className="mono">{cap.department ?? "All departments"}</td>
                     <td>{scopeLabel}</td>
                     <td className="mono">{cap.unit}</td>
                     <td style={{ minWidth: 160 }}>
@@ -97,7 +97,8 @@ export default async function BudgetsPage() {
         <form action={updateBudgetCap} className="field-row">
           <label>
             Department
-            <select name="department" required>
+            <select name="department" required defaultValue="org-wide">
+              <option value="org-wide">All departments (org-wide)</option>
               {DEPARTMENTS.map((d) => (
                 <option key={d} value={d}>
                   {d}

@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { AGENT_PROMPTS } from "./agents";
-import { readAgentPrompt } from "./actions";
+import { readAgentPrompt, getOrgProfile } from "./actions";
 import { PromptsBoard } from "./PromptsBoard";
 
 /**
@@ -15,11 +15,11 @@ export default async function PromptsPage({
 }) {
   const { agent } = await searchParams;
   const selectedId = AGENT_PROMPTS.some((a) => a.id === agent) ? (agent as string) : "root";
-  const initialContent = await readAgentPrompt(selectedId);
+  const [initialContent, orgProfile] = await Promise.all([readAgentPrompt(selectedId), getOrgProfile()]);
 
   return (
     <Suspense fallback={null}>
-      <PromptsBoard agents={AGENT_PROMPTS} selectedId={selectedId} initialContent={initialContent} />
+      <PromptsBoard agents={AGENT_PROMPTS} selectedId={selectedId} initialContent={initialContent} orgProfile={orgProfile} />
     </Suspense>
   );
 }

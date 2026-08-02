@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { budgetCaps, db, ensureOrganization } from "@foundry/db";
 import { DEPARTMENTS, type Department } from "@foundry/shared-types";
@@ -17,14 +17,18 @@ const SCOPES = ["per_run", "daily", "monthly"] as const;
 export async function updateBudgetCap(formData: FormData) {
   const { clerkOrgId, orgSlug } = await requireOrgAdmin();
 
-  const department = formData.get("department");
+  const departmentRaw = formData.get("department");
   const scope = formData.get("scope");
   const unit = formData.get("unit");
   const capAmount = formData.get("capAmount");
 
+  // Empty string / "org-wide" (the <select>'s "All departments" option) means
+  // a whole-org cap — same null-is-org-wide convention as kill_switches.
+  const isOrgWide = departmentRaw === "" || departmentRaw === "org-wide";
+
   if (
-    typeof department !== "string" ||
-    !DEPARTMENTS.includes(department as Department) ||
+    typeof departmentRaw !== "string" ||
+    (!isOrgWide && !DEPARTMENTS.includes(departmentRaw as Department)) ||
     typeof scope !== "string" ||
     !SCOPES.includes(scope as (typeof SCOPES)[number]) ||
     typeof unit !== "string" ||
@@ -35,6 +39,7 @@ export async function updateBudgetCap(formData: FormData) {
   ) {
     throw new Error("Invalid form submission.");
   }
+  const department = isOrgWide ? null : (departmentRaw as Department);
 
   const org = await ensureOrganization({ clerkOrgId, slug: orgSlug ?? undefined });
 
@@ -44,7 +49,7 @@ export async function updateBudgetCap(formData: FormData) {
     .where(
       and(
         eq(budgetCaps.orgId, org.id),
-        eq(budgetCaps.department, department as Department),
+        department === null ? isNull(budgetCaps.department) : eq(budgetCaps.department, department),
         eq(budgetCaps.scope, scope),
         eq(budgetCaps.unit, unit),
       ),
@@ -56,7 +61,7 @@ export async function updateBudgetCap(formData: FormData) {
   } else {
     await db.insert(budgetCaps).values({
       orgId: org.id,
-      department: department as Department,
+      department,
       scope,
       unit,
       capAmount,

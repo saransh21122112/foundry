@@ -1,7 +1,7 @@
 "use server";
 
 import { auth } from "@clerk/nextjs/server";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db, ensureOrganization, runSessions } from "@foundry/db";
 
 /**
@@ -61,12 +61,29 @@ export async function listTasks(): Promise<Array<{ id: string; title: string; cr
  * a "approve"/"deny" text reply to a pending tool approval (see eve's docs,
  * concepts/sessions-runs-and-streaming.md#send-a-follow-up-message). One
  * chat box covers all three instead of needing separate UI per case.
+ *
+ * eve authenticates the CALLER but doesn't know which org owns a given
+ * session id — eve's own docs (patterns/multi-tenant-auth.md) say that ACL
+ * is the application's job. `sessionId` comes straight from client input, so
+ * without this check, any signed-in member of ANY org who learns another
+ * org's session id (visible in that org's own `?session=` URL) could read
+ * or interject into that org's live session. Found by a live isolation
+ * audit (2026-08-02) — confirmed no such check existed anywhere on this path.
  */
 export async function sendFollowUp(sessionId: string, continuationToken: string, message: string): Promise<void> {
-  const { userId, getToken } = await auth();
+  const { userId, orgId: clerkOrgId, orgSlug, getToken } = await auth();
   if (!userId) throw new Error("Not signed in.");
+  if (!clerkOrgId) throw new Error("Select or create an organization first.");
   const token = await getToken();
   if (!token) throw new Error("Could not get a session token.");
+
+  const org = await ensureOrganization({ clerkOrgId, slug: orgSlug ?? undefined });
+  const [owned] = await db
+    .select({ id: runSessions.id })
+    .from(runSessions)
+    .where(and(eq(runSessions.id, sessionId), eq(runSessions.orgId, org.id)))
+    .limit(1);
+  if (!owned) throw new Error("Session not found.");
 
   const res = await fetch(`${process.env.AGENT_RUNTIME_URL}/eve/v1/session/${encodeURIComponent(sessionId)}`, {
     method: "POST",

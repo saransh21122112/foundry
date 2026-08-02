@@ -1,4 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
+import { and, eq } from "drizzle-orm";
+import { db, ensureOrganization, runSessions } from "@foundry/db";
 
 /**
  * Proxies the agent-runtime's session event stream to the browser. True
@@ -20,13 +22,31 @@ import { auth } from "@clerk/nextjs/server";
  * compound under real usage, not just repeated manual testing — so this
  * isn't optional cleanup, it's what makes polling-based replay safe to run
  * continuously in production.
+ *
+ * The `run_sessions` ownership check below matters just as much: `sessionId`
+ * is a client-supplied URL segment, and eve authenticates the caller but has
+ * no idea which org owns a given session id (that ACL is explicitly the
+ * application's job per eve's own multi-tenant-auth docs). Without this
+ * check, any signed-in member of ANY org who learned another org's session
+ * id could read that org's entire live transcript. Found by a live
+ * isolation audit (2026-08-02) — confirmed missing, fixed here.
  */
 export async function GET(request: Request, { params }: { params: Promise<{ sessionId: string }> }) {
-  const { getToken } = await auth();
+  const { getToken, orgId: clerkOrgId, orgSlug } = await auth();
   const token = await getToken();
   if (!token) return new Response("Not signed in.", { status: 401 });
+  if (!clerkOrgId) return new Response("Select or create an organization first.", { status: 401 });
 
   const { sessionId } = await params;
+
+  const org = await ensureOrganization({ clerkOrgId, slug: orgSlug ?? undefined });
+  const [owned] = await db
+    .select({ id: runSessions.id })
+    .from(runSessions)
+    .where(and(eq(runSessions.id, sessionId), eq(runSessions.orgId, org.id)))
+    .limit(1);
+  if (!owned) return new Response("Session not found.", { status: 404 });
+
   const { search } = new URL(request.url);
   const res = await fetch(`${process.env.AGENT_RUNTIME_URL}/eve/v1/session/${sessionId}/stream${search}`, {
     headers: { authorization: `Bearer ${token}` },

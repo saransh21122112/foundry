@@ -1,0 +1,1 @@
+ALTER TABLE "activity_log" ALTER COLUMN "department" DROP NOT NULL;

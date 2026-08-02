@@ -1,21 +1,49 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
 
 const NAV = [
+  { href: "/dashboard/onboarding", label: "Get set up", blurb: "First-run setup" },
   { href: "/dashboard/run", label: "Run a task", blurb: "Give your company something to do" },
   { href: "/dashboard/approvals", label: "Approvals", blurb: "Say yes or no" },
+  { href: "/dashboard/kill-switch", label: "Kill switch", blurb: "Emergency stop, org-wide or per department" },
   { href: "/dashboard/departments", label: "Departments", blurb: "Turn agents on, set how free they are" },
   { href: "/dashboard/prompts", label: "Agent prompts", blurb: "Edit what each agent is told to do" },
   { href: "/dashboard/budgets", label: "Budgets", blurb: "Spending limits" },
+  { href: "/dashboard/connections", label: "Connections", blurb: "Outbound webhooks (Slack/Discord/Zapier)" },
   { href: "/dashboard/tools", label: "Tool allowlist", blurb: "Turn off one specific action" },
   { href: "/dashboard/activity", label: "Activity", blurb: "Everything that's happened" },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+
+  // Polls a tiny org-scoped count route (app/api/failure-count) rather than
+  // fetching from the DB here directly — this layout is "use client" and
+  // stays that way; a small poll is less disruptive than converting it to
+  // fetch server-side just for one badge. Mirrors AutoRefresh's interval
+  // pattern used on the Activity page.
+  const [failureCount, setFailureCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      fetch("/api/failure-count")
+        .then((res) => res.json())
+        .then((data) => {
+          if (!cancelled) setFailureCount(data.count ?? 0);
+        })
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   return (
     <div className="shell">
@@ -28,6 +56,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <li key={item.href}>
               <Link href={item.href} aria-current={pathname === item.href ? "page" : undefined}>
                 {item.label}
+                {item.href === "/dashboard/activity" && failureCount > 0 ? (
+                  <span className="badge badge-risk-financial" style={{ marginLeft: 8 }}>
+                    {failureCount}
+                  </span>
+                ) : null}
                 <small>{item.blurb}</small>
               </Link>
             </li>

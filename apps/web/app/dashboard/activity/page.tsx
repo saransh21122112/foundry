@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { auth } from "@clerk/nextjs/server";
 import { activityLog, db, ensureOrganization } from "@foundry/db";
 import { EVENT_TYPE_LABEL } from "@/lib/copy";
@@ -13,10 +13,33 @@ const EVENT_COLOR: Record<string, string> = {
   approval_granted: "var(--cool)",
   approval_rejected: "var(--ember-hot)",
   kill_switch_triggered: "var(--ember-hot)",
+  kill_switch_resolved: "var(--ember)",
 };
 
-export default async function ActivityPage() {
+// The only failure event actually persisted to activity_log today —
+// activityEventTypeEnum (packages/db/src/schema.ts) has no turn_failed /
+// session_failed variant. Those only ever exist as transient stream events
+// (see RunBoard.tsx's step.failed/turn.failed/session.failed handling) and
+// are never written as a row here — logging them is out of scope for this
+// change, noted as a finding rather than added.
+const FAILED_EVENT_TYPE = "tool_call_failed";
+
+function errorMessageFrom(toolOutput: unknown): string | null {
+  if (toolOutput && typeof toolOutput === "object" && "error" in toolOutput) {
+    const err = (toolOutput as { error?: unknown }).error;
+    if (typeof err === "string") return err;
+  }
+  return toolOutput ? JSON.stringify(toolOutput) : null;
+}
+
+export default async function ActivityPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ filter?: string }>;
+}) {
   const { orgId: clerkOrgId, orgSlug } = await auth();
+  const { filter } = await searchParams;
+  const failedOnly = filter === "failed";
 
   if (!clerkOrgId) {
     return (
@@ -34,11 +57,16 @@ export default async function ActivityPage() {
       department: activityLog.department,
       eventType: activityLog.eventType,
       toolName: activityLog.toolName,
+      toolOutput: activityLog.toolOutput,
       actor: activityLog.actor,
       timestamp: activityLog.timestamp,
     })
     .from(activityLog)
-    .where(eq(activityLog.orgId, org.id))
+    .where(
+      failedOnly
+        ? and(eq(activityLog.orgId, org.id), eq(activityLog.eventType, FAILED_EVENT_TYPE))
+        : eq(activityLog.orgId, org.id),
+    )
     .orderBy(desc(activityLog.timestamp))
     .limit(200);
 
@@ -52,8 +80,19 @@ export default async function ActivityPage() {
         ran on its own, waited for you, or was turned off outright.
       </p>
 
+      <p style={{ marginBottom: 16 }}>
+        <a href="/dashboard/activity" className={failedOnly ? "btn" : "btn btn-primary"}>
+          All activity
+        </a>{" "}
+        <a href="/dashboard/activity?filter=failed" className={failedOnly ? "btn btn-reject" : "btn"}>
+          Failures only
+        </a>
+      </p>
+
       <div className="panel">
-        {rows.length === 0 && <p className="panel-empty">No activity yet.</p>}
+        {rows.length === 0 && (
+          <p className="panel-empty">{failedOnly ? "No failures — everything's run clean." : "No activity yet."}</p>
+        )}
         {rows.length > 0 && (
           <table>
             <thead>
@@ -63,36 +102,53 @@ export default async function ActivityPage() {
                 <th>Event</th>
                 <th>Tool</th>
                 <th>Actor</th>
+                <th>Error</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.id}>
-                  <td className="mono" style={{ color: "var(--iron)" }}>
-                    {row.timestamp.toLocaleString()}
-                  </td>
-                  <td className="mono">{row.department}</td>
-                  <td>
-                    <span
-                      style={{ display: "inline-flex", alignItems: "center", gap: 6, color: EVENT_COLOR[row.eventType] ?? "var(--iron)" }}
-                      title={row.eventType}
-                    >
+              {rows.map((row) => {
+                const isFailed = row.eventType === FAILED_EVENT_TYPE;
+                const errorMessage = isFailed ? errorMessageFrom(row.toolOutput) : null;
+                return (
+                  <tr key={row.id} className={isFailed ? "row-failed" : undefined}>
+                    <td className="mono" style={{ color: "var(--iron)" }}>
+                      {row.timestamp.toLocaleString()}
+                    </td>
+                    <td className="mono">{row.department ?? "All departments"}</td>
+                    <td>
                       <span
-                        style={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: "50%",
-                          background: EVENT_COLOR[row.eventType] ?? "var(--iron)",
-                          flexShrink: 0,
-                        }}
-                      />
-                      {EVENT_TYPE_LABEL[row.eventType] ?? row.eventType}
-                    </span>
-                  </td>
-                  <td className="mono">{row.toolName ?? "—"}</td>
-                  <td className="mono" style={{ color: "var(--iron)" }}>{row.actor}</td>
-                </tr>
-              ))}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, color: EVENT_COLOR[row.eventType] ?? "var(--iron)" }}
+                        title={row.eventType}
+                      >
+                        <span
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: "50%",
+                            background: EVENT_COLOR[row.eventType] ?? "var(--iron)",
+                            flexShrink: 0,
+                          }}
+                        />
+                        {EVENT_TYPE_LABEL[row.eventType] ?? row.eventType}
+                      </span>
+                    </td>
+                    <td className="mono">{row.toolName ?? "—"}</td>
+                    <td className="mono" style={{ color: "var(--iron)" }}>{row.actor}</td>
+                    <td>
+                      {errorMessage ? (
+                        <details>
+                          <summary className="mono" style={{ color: "var(--ember-hot)", cursor: "pointer" }}>
+                            {errorMessage.length > 60 ? `${errorMessage.slice(0, 60)}…` : errorMessage}
+                          </summary>
+                          {errorMessage.length > 60 && <p style={{ marginTop: 6 }}>{errorMessage}</p>}
+                        </details>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
