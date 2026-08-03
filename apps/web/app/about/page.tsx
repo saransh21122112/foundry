@@ -1,5 +1,4 @@
-import Link from "next/link";
-import { SignUpButton } from "@clerk/nextjs";
+import { MarketingLinks } from "@/components/MarketingLinks";
 
 export default function AboutPage() {
   return (
@@ -35,6 +34,9 @@ export default function AboutPage() {
         acts the way your organization actually works, not a generic
         default.
       </p>
+      <p className="lede">
+        See the <a href="/features">full pipeline and department roster →</a>
+      </p>
 
       <h2 style={{ marginTop: 8 }}>Early, and built in the open</h2>
       <p className="lede">
@@ -45,14 +47,7 @@ export default function AboutPage() {
         it seriously precisely because these agents take real actions.
       </p>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-        <SignUpButton>
-          <button className="btn btn-primary">Sign up</button>
-        </SignUpButton>
-        <Link href="/">
-          <button className="btn">Back home</button>
-        </Link>
-      </div>
+      <MarketingLinks current="/about" />
     </main>
   );
 }

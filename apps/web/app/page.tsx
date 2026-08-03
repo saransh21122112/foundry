@@ -54,7 +54,11 @@ export default function HomePage() {
         )}
 
         <p className="lede" style={{ marginTop: 24 }}>
-          <Link href="/about">About Foundry &amp; how the guardrails work →</Link>
+          <Link href="/features">Features &amp; departments →</Link>
+          {" · "}
+          <Link href="/about">How the guardrails work →</Link>
+          {" · "}
+          <Link href="/pricing">Pricing →</Link>
         </p>
       </main>
 
