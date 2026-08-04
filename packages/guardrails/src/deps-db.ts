@@ -18,12 +18,6 @@ import { computeBudgetDecision } from "./budget-decision.js";
 const DEFAULT_RATE_LIMIT_WINDOW_MINUTES = 60;
 const DEFAULT_RATE_LIMIT_MAX_CALLS = 20;
 
-// Not declared in this package's own package.json — resolved from
-// apps/agent-runtime's node_modules via npm workspace hoisting (verified:
-// `require.resolve("resend", { paths: [".../packages/guardrails/src"] })`
-// finds the hoisted root copy). Only ever executed inside the agent-runtime
-// process, same as everything else in this file.
-const resend = new Resend(process.env.RESEND_API_KEY);
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
 /**
@@ -73,6 +67,12 @@ async function notifyAdminsOfApproval(input: {
   const appUrl = process.env.APP_URL ?? "http://localhost:3311";
   const reasonLabel = approvalReasonLabel(input.reason);
 
+  // Not declared in this package's own package.json — resolved from
+  // apps/agent-runtime's node_modules via npm workspace hoisting (verified:
+  // `require.resolve("resend", { paths: [".../packages/guardrails/src"] })`
+  // finds the hoisted root copy). Only ever executed inside the agent-runtime
+  // process, same as everything else in this file.
+  const resend = new Resend(process.env.RESEND_API_KEY);
   let sent = 0;
   for (const { clerkUserId } of admins) {
     const user = await clerk.users.getUser(clerkUserId);
