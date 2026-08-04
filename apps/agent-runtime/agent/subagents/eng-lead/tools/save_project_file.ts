@@ -19,6 +19,11 @@ import { dbDeps } from "@foundry/guardrails/deps-db";
  * Refuses to overwrite an existing file rather than gating on approval —
  * that keeps a runaway agent from clobbering earlier output while still
  * needing no human in the loop for the common case of writing something new.
+ *
+ * Real tool_call_executed/tool_call_failed outcomes are logged generically
+ * by the action.result eve hook (see
+ * apps/agent-runtime/agent/lib/log-tool-result.ts) — this tool no longer
+ * hand-writes them.
  */
 const PROJECTS_ROOT = path.join(process.env.HOME ?? "", "Projects", "foundry_projects");
 
@@ -43,9 +48,6 @@ export default defineTool({
       throw new Error("relativePath escapes the project folder.");
     }
 
-    const agentRunId = ctx.session.parent?.rootSessionId ?? ctx.session.id;
-    const logCtx = { orgId, department: "eng-lead" as const, agentRunId };
-
     await mkdir(path.dirname(targetPath), { recursive: true });
     try {
       await writeFile(targetPath, input.contents, { flag: "wx" });
@@ -54,23 +56,8 @@ export default defineTool({
         (err as NodeJS.ErrnoException).code === "EEXIST"
           ? `${input.relativePath} already exists in ${input.projectSlug} — use a different name, or ask the user before overwriting.`
           : (err as Error).message;
-      await dbDeps.logActivity({
-        ...logCtx,
-        eventType: "tool_call_failed",
-        toolName: "save_project_file",
-        toolInput: input,
-        toolOutput: { error: failMessage },
-      });
       throw new Error(failMessage);
     }
-
-    await dbDeps.logActivity({
-      ...logCtx,
-      eventType: "tool_call_executed",
-      toolName: "save_project_file",
-      toolInput: input,
-      toolOutput: { path: targetPath },
-    });
 
     return { saved: true, path: targetPath };
   },

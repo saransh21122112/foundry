@@ -55,6 +55,7 @@ export default async function ActivityPage({
     .select({
       id: activityLog.id,
       department: activityLog.department,
+      agentNodeId: activityLog.agentNodeId,
       eventType: activityLog.eventType,
       toolName: activityLog.toolName,
       toolOutput: activityLog.toolOutput,
@@ -114,7 +115,12 @@ export default async function ActivityPage({
                     <td className="mono" style={{ color: "var(--iron)" }}>
                       {row.timestamp.toLocaleString()}
                     </td>
-                    <td className="mono">{row.department ?? "All departments"}</td>
+                    <td className="mono">
+                      {row.department ?? "All departments"}
+                      {row.agentNodeId && row.agentNodeId !== row.department && (
+                        <span style={{ color: "var(--iron)" }}> / {row.agentNodeId.split("/").pop()}</span>
+                      )}
+                    </td>
                     <td>
                       <span
                         style={{ display: "inline-flex", alignItems: "center", gap: 6, color: EVENT_COLOR[row.eventType] ?? "var(--iron)" }}

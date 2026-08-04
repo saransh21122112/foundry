@@ -9,8 +9,10 @@ import { dbDeps } from "@foundry/guardrails/deps-db";
  * Posts a short text notification to this org's connected outbound
  * webhook (Slack/Discord/Zapier incoming-webhook URL, saved by an admin
  * at /dashboard/connections — see that page's actions.ts). Structural
- * clone of sales-lead's send_email.ts: same riskClass/approval wiring,
- * same real-outcome activity logging on both success and failure.
+ * clone of sales-lead's send_email.ts: same riskClass/approval wiring.
+ * Real-outcome activity logging (success and failure) is handled
+ * generically by the action.result eve hook (see
+ * apps/agent-runtime/agent/lib/log-tool-result.ts), not hand-written here.
  *
  * Payload shape is `{ text: string }` — the one JSON body both Slack's
  * and Discord's incoming-webhook endpoints accept for a plain-text
@@ -41,12 +43,9 @@ export default defineTool({
     const orgId = ctx.session.auth.current?.attributes?.orgId;
     if (typeof orgId !== "string") {
       // Shouldn't happen — the approval policy above already denies
-      // no-org sessions before execute() ever runs. Fail loud rather
-      // than logActivity with a garbage orgId that'd just break the FK.
+      // no-org sessions before execute() ever runs.
       throw new Error("No organization resolved on this session.");
     }
-    const agentRunId = ctx.session.parent?.rootSessionId ?? ctx.session.id;
-    const logCtx = { orgId, department: "ops-manager" as const, agentRunId };
 
     const [connection] = await db
       .select()
@@ -55,76 +54,32 @@ export default defineTool({
       .limit(1);
 
     if (!connection || connection.status !== "active") {
-      const message = "No webhook connected — ask an admin to add one at /dashboard/connections.";
-      await dbDeps.logActivity({
-        ...logCtx,
-        eventType: "tool_call_failed",
-        toolName: "post_webhook",
-        toolInput: input,
-        toolOutput: { error: message },
-      });
-      throw new Error(message);
+      throw new Error("No webhook connected — ask an admin to add one at /dashboard/connections.");
     }
 
     const url = (connection.config as { url?: string } | null)?.url;
     if (typeof url !== "string" || url.length === 0) {
-      const message = "Webhook connection has no URL configured — ask an admin to fix it at /dashboard/connections.";
-      await dbDeps.logActivity({
-        ...logCtx,
-        eventType: "tool_call_failed",
-        toolName: "post_webhook",
-        toolInput: input,
-        toolOutput: { error: message },
-      });
-      throw new Error(message);
+      throw new Error("Webhook connection has no URL configured — ask an admin to fix it at /dashboard/connections.");
     }
 
+    let res: Response;
     try {
-      const res = await fetch(url, {
+      res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: input.text }),
         signal: AbortSignal.timeout(10_000),
       });
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        const message = `Webhook endpoint returned ${res.status}: ${body.slice(0, 200)}`;
-        await dbDeps.logActivity({
-          ...logCtx,
-          eventType: "tool_call_failed",
-          toolName: "post_webhook",
-          toolInput: input,
-          toolOutput: { error: message },
-        });
-        throw new Error(message);
-      }
-
-      await dbDeps.logActivity({
-        ...logCtx,
-        eventType: "tool_call_executed",
-        toolName: "post_webhook",
-        toolInput: input,
-        toolOutput: { status: res.status },
-      });
-
-      return { posted: true, status: res.status };
     } catch (err) {
-      // Network errors / timeouts don't hit the res.ok branch above —
-      // log and rethrow here too so every failure path leaves a real
-      // tool_call_failed row rather than crashing the task silently.
-      if (err instanceof Error && err.message.startsWith("Webhook endpoint returned")) {
-        throw err; // already logged above
-      }
       const message = err instanceof Error ? err.message : String(err);
-      await dbDeps.logActivity({
-        ...logCtx,
-        eventType: "tool_call_failed",
-        toolName: "post_webhook",
-        toolInput: input,
-        toolOutput: { error: message },
-      });
       throw new Error(`Failed to reach webhook: ${message}`);
     }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Webhook endpoint returned ${res.status}: ${body.slice(0, 200)}`);
+    }
+
+    return { posted: true, status: res.status };
   },
 });

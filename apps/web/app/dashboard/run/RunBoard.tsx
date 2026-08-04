@@ -22,6 +22,30 @@ interface EveEvent {
   data?: Record<string, unknown>;
 }
 
+/**
+ * One pending input request from an `input.requested` event — see
+ * node_modules/eve/dist/src/runtime/input/types.d.ts. Only the field this
+ * file actually reads is declared here, same hand-rolled convention as
+ * EveEvent above.
+ */
+interface EveInputRequest {
+  action?: { toolName?: string };
+}
+
+/**
+ * eve emits `input.requested` for two unrelated things: a real
+ * guardrails-gated tool approval, and eve's own built-in `ask_question`
+ * tool (a plain conversational pause, nothing to do with guardrails).
+ * `action.toolName === "ask_question"` is the only discriminator eve's
+ * types expose — there's no separate "kind" field.
+ */
+type PendingKind = "approval" | "question" | null;
+
+function pendingKindFrom(requests: readonly EveInputRequest[] | undefined): PendingKind {
+  if (!requests || requests.length === 0) return null;
+  return requests.every((r) => r.action?.toolName === "ask_question") ? "question" : "approval";
+}
+
 const LAST_SESSION_KEY = "foundry:lastRunSession";
 
 /** "3m ago" / "5h ago" / a date once it's more than a day old — for the task list. */
@@ -66,7 +90,7 @@ function relativeTime(date: Date): string {
 async function replayTranscript(
   sessionId: string,
   onEntry: (entry: LogEntry) => void,
-  onApprovalPending: () => void,
+  onPending: (kind: PendingKind) => void,
   onWaiting: (continuationToken: string) => void,
   shouldStop: () => boolean,
 ): Promise<void> {
@@ -109,8 +133,16 @@ async function replayTranscript(
           const text = event.data?.message as string | undefined;
           if (text) onEntry({ kind: "agent", text });
         } else if (event.type === "input.requested") {
-          onApprovalPending();
-          onEntry({ kind: "pending", text: "Paused — this needs your approval before it can go further." });
+          const requests = event.data?.requests as readonly EveInputRequest[] | undefined;
+          const kind = pendingKindFrom(requests);
+          onPending(kind);
+          onEntry({
+            kind: "pending",
+            text:
+              kind === "question"
+                ? "Paused — waiting for your answer to keep this going."
+                : "Paused — this needs your approval before it can go further.",
+          });
         } else if (event.type === "step.failed" || event.type === "turn.failed" || event.type === "session.failed") {
           const failMessage = (event.data as { message?: string } | undefined)?.message;
           onEntry({ kind: "system", text: `Something went wrong: ${failMessage ?? event.type}` });
@@ -145,7 +177,7 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
   const [message, setMessage] = useState("");
   const [log, setLog] = useState<LogEntry[]>([]);
   const [running, setRunning] = useState(false);
-  const [needsApproval, setNeedsApproval] = useState(false);
+  const [pendingKind, setPendingKind] = useState<PendingKind>(null);
   const [continuationToken, setContinuationToken] = useState<string | null>(null);
   const [reply, setReply] = useState("");
   const [sendingReply, setSendingReply] = useState(false);
@@ -169,7 +201,7 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
   const runReplay = useCallback(async (sessionId: string) => {
     activeSessionRef.current = sessionId;
     setLog([]);
-    setNeedsApproval(false);
+    setPendingKind(null);
     setContinuationToken(null);
     setLoadError(null);
     setRunning(true);
@@ -177,7 +209,7 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
       await replayTranscript(
         sessionId,
         (entry) => setLog((l) => [...l, entry]),
-        () => setNeedsApproval(true),
+        (kind) => setPendingKind(kind),
         (token) => setContinuationToken(token),
         () => activeSessionRef.current !== sessionId,
       );
@@ -244,7 +276,7 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
     activeSessionRef.current = null;
     setMessage("");
     setLog([]);
-    setNeedsApproval(false);
+    setPendingKind(null);
     setContinuationToken(null);
     router.replace("/dashboard/run");
   }
@@ -295,11 +327,16 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
             {loadError}
           </div>
         )}
-        {needsApproval && (
+        {pendingKind === "approval" && (
           <div className="callout">
             This task is paused, waiting on you — reply below (e.g. &quot;approve&quot; or
             &quot;deny&quot;), or use the{" "}
             <Link href="/dashboard/approvals">Approval queue →</Link>
+          </div>
+        )}
+        {pendingKind === "question" && (
+          <div className="callout">
+            Waiting for your answer — reply below to keep this task going.
           </div>
         )}
 

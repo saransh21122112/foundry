@@ -14,6 +14,7 @@ export const DEPARTMENTS = [
   "design-lead",
   "data-lead",
   "sales-lead",
+  "swe-lead",
 ] as const;
 export type Department = (typeof DEPARTMENTS)[number];
 
@@ -46,11 +47,15 @@ export type RiskClass = (typeof RISK_CLASSES)[number];
  * allowlist editor should only offer gated tools.
  */
 export const KNOWN_TOOLS: Record<Department, Array<{ name: string; riskClass: RiskClass; gated: boolean }>> = {
-  "eng-lead": [],
+  "eng-lead": [{ name: "save_project_file", riskClass: "reversible-low", gated: false }],
   "product-lead": [],
   researcher: [{ name: "publish_research", riskClass: "reversible-high", gated: true }],
-  "ops-manager": [],
+  "ops-manager": [
+    { name: "post_webhook", riskClass: "reversible-high", gated: true },
+    { name: "get_daily_ops_digest", riskClass: "reversible-low", gated: false },
+  ],
   "design-lead": [],
   "data-lead": [{ name: "get_activity_summary", riskClass: "reversible-low", gated: false }],
   "sales-lead": [{ name: "send_email", riskClass: "reversible-high", gated: true }],
+  "swe-lead": [],
 };

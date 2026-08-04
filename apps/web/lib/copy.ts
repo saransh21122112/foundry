@@ -9,6 +9,7 @@ export const DEPARTMENT_BLURB: Record<Department, string> = {
   "design-lead": "Visual and UX work — pages, product UI, brand consistency.",
   "data-lead": "Dashboards, metrics definitions, and reporting.",
   "sales-lead": "Outreach and marketing copy — and sends it, if you allow that.",
+  "swe-lead": "Role-shaped software engineering: frontend, backend, and UI/UX design work.",
 };
 
 export const AUTONOMY_LABEL: Record<AutonomyLevel, string> = {

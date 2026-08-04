@@ -82,5 +82,7 @@ export interface GuardrailDeps {
     toolName: string;
     toolInput?: unknown;
     toolOutput?: unknown;
+    /** See activity_log.agent_node_id — only ever set by the eve-hook logging path. */
+    agentNodeId?: string;
   }): Promise<void>;
 }

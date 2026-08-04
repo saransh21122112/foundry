@@ -281,6 +281,7 @@ export const dbDeps: GuardrailDeps = {
       toolName: entry.toolName,
       toolInput: entry.toolInput as object | undefined,
       toolOutput: entry.toolOutput as object | undefined,
+      agentNodeId: entry.agentNodeId,
       actor: "agent",
     });
   },

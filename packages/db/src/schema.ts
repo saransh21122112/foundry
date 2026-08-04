@@ -217,6 +217,12 @@ export const activityLog = pgTable("activity_log", {
   toolInput: jsonb("tool_input"),
   toolOutput: jsonb("tool_output"),
   actor: text("actor").notNull(), // "agent" or a clerk user id
+  // Populated only by the eve-hook-based logging path (see
+  // apps/agent-runtime/agent/lib/log-tool-result.ts), e.g.
+  // "swe-lead/frontend-developer" — distinguishes a nested delegate
+  // subagent's own calls from its parent department's direct calls.
+  // Null for every enforce()-originated row (existing behavior, unchanged).
+  agentNodeId: text("agent_node_id"),
   timestamp: timestamp("timestamp", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   orgTimeIdx: index("activity_log_org_time_idx").on(t.orgId, t.timestamp),

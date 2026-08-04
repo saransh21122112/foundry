@@ -20,10 +20,10 @@ import { dbDeps } from "@foundry/guardrails/deps-db";
  *
  * `enforce()` (via the `approval` policy below) only covers the
  * attempt/allow/block decision — it has no visibility into whether the
- * provider call that follows actually succeeds. Logging the real
- * `tool_call_executed`/`tool_call_failed` outcome here closes that gap;
- * before this no tool's real execution result reached `activity_log` at
- * all.
+ * provider call that follows actually succeeds. The real
+ * `tool_call_executed`/`tool_call_failed` outcome is logged generically by
+ * the action.result eve hook (see
+ * apps/agent-runtime/agent/lib/log-tool-result.ts), not hand-written here.
  */
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -47,11 +47,9 @@ export default defineTool({
     if (typeof orgId !== "string") {
       // Shouldn't happen — the approval policy above already denies
       // no-org sessions before execute() ever runs. Fail loud rather
-      // than logActivity with a garbage orgId that'd just break the FK.
+      // than silently attributing this call to a garbage orgId.
       throw new Error("No organization resolved on this session.");
     }
-    const agentRunId = ctx.session.parent?.rootSessionId ?? ctx.session.id;
-    const logCtx = { orgId, department: "sales-lead" as const, agentRunId };
 
     const { data, error } = await resend.emails.send({
       from: "Foundry <onboarding@resend.dev>",
@@ -61,23 +59,8 @@ export default defineTool({
     });
 
     if (error) {
-      await dbDeps.logActivity({
-        ...logCtx,
-        eventType: "tool_call_failed",
-        toolName: "send_email",
-        toolInput: input,
-        toolOutput: { error: error.message },
-      });
       throw new Error(`Resend rejected the send: ${error.message}`);
     }
-
-    await dbDeps.logActivity({
-      ...logCtx,
-      eventType: "tool_call_executed",
-      toolName: "send_email",
-      toolInput: input,
-      toolOutput: { resendId: data?.id },
-    });
 
     return { sent: true, resendId: data?.id };
   },
