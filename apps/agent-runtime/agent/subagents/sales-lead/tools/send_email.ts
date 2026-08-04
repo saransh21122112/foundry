@@ -25,8 +25,6 @@ import { dbDeps } from "@foundry/guardrails/deps-db";
  * the action.result eve hook (see
  * apps/agent-runtime/agent/lib/log-tool-result.ts), not hand-written here.
  */
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 export default defineTool({
   description: "Send an outreach email on behalf of this organization.",
   inputSchema: z.object({
@@ -51,6 +49,7 @@ export default defineTool({
       throw new Error("No organization resolved on this session.");
     }
 
+    const resend = new Resend(process.env.RESEND_API_KEY);
     const { data, error } = await resend.emails.send({
       from: "Foundry <onboarding@resend.dev>",
       to: input.to,
