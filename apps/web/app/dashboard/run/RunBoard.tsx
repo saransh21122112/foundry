@@ -93,7 +93,17 @@ async function replayTranscript(
   onPending: (kind: PendingKind) => void,
   onWaiting: (continuationToken: string) => void,
   shouldStop: () => boolean,
-): Promise<void> {
+  // A resting point (session.waiting/completed/failed) only counts as the
+  // real outcome once the tail has advanced past this index. Without this,
+  // a replay started right after sending a reply can race the agent
+  // runtime's async processing of that reply: the very first fetch can
+  // land before eve has recorded anything new, see the SAME old
+  // session.waiting event still sitting at the tail, and correctly-but-
+  // wrongly treat that stale state as "done" — the reply silently appears
+  // to do nothing. Pass the previous cursor here to force at least one
+  // more poll until real new events show up.
+  minRestingIndex = 0,
+): Promise<number> {
   let cursor = 0;
 
   while (!shouldStop()) {
@@ -151,7 +161,10 @@ async function replayTranscript(
           if (token) onWaiting(token);
         }
 
-        if (event.type === "session.completed" || event.type === "session.failed" || event.type === "session.waiting") {
+        if (
+          (event.type === "session.completed" || event.type === "session.failed" || event.type === "session.waiting") &&
+          index >= minRestingIndex
+        ) {
           reachedRestingPoint = true;
         }
 
@@ -161,12 +174,13 @@ async function replayTranscript(
     reader.cancel().catch(() => {});
     cursor = index + 1;
 
-    // reachedRestingPoint can only have been set by the event at the tail
-    // (nothing is recorded after session.waiting/completed/failed until a
-    // follow-up adds more), so it's genuinely current, not stale.
-    if (reachedRestingPoint) return;
+    // reachedRestingPoint can only have been set by an event at/after
+    // minRestingIndex, so it's genuinely current, not a stale resting point
+    // left over from before this replay started (see minRestingIndex's doc).
+    if (reachedRestingPoint) return cursor;
     await new Promise((resolve) => setTimeout(resolve, 700));
   }
+  return cursor;
 }
 
 export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
@@ -193,12 +207,15 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
   // value) sees the mismatch on its next poll and stops itself — see
   // replayTranscript's header comment for why an orphaned loop matters.
   const activeSessionRef = useRef<string | null>(null);
+  // Cursor (event count) as of the end of the last completed replay — see
+  // handleReply's use of this as minRestingIndex on the post-reply replay.
+  const lastCursorRef = useRef(0);
 
   const refreshTasks = useCallback(() => {
     listTasks().then(setTasks).catch(() => {});
   }, []);
 
-  const runReplay = useCallback(async (sessionId: string) => {
+  const runReplay = useCallback(async (sessionId: string, minRestingIndex = 0) => {
     activeSessionRef.current = sessionId;
     setLog([]);
     setPendingKind(null);
@@ -206,13 +223,15 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
     setLoadError(null);
     setRunning(true);
     try {
-      await replayTranscript(
+      const cursor = await replayTranscript(
         sessionId,
         (entry) => setLog((l) => [...l, entry]),
         (kind) => setPendingKind(kind),
         (token) => setContinuationToken(token),
         () => activeSessionRef.current !== sessionId,
+        minRestingIndex,
       );
+      if (activeSessionRef.current === sessionId) lastCursorRef.current = cursor;
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -230,7 +249,10 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
       // Same event log, re-read from the top — the session's durable
       // history is the source of truth, so this stays correct even if the
       // reply answered a proxied subagent approval buried mid-transcript.
-      await runReplay(sessionIdFromUrl);
+      // minRestingIndex forces the replay to keep polling until it sees a
+      // resting point AFTER where we were before this reply, instead of
+      // possibly racing the runtime and re-landing on the stale one.
+      await runReplay(sessionIdFromUrl, lastCursorRef.current);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
     } finally {
