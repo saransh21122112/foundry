@@ -69,9 +69,11 @@ export default eveChannel({
     vercelOidc(),
     // Open on localhost for `eve dev` and the REPL; ignored in production.
     localDev(),
-    // Placeholder — does not allow browser requests in production. Remove
-    // once clerkOrgSession() above is real; keeping both active at once
-    // would let unauthenticated traffic through.
+    // clerkOrgSession() above is real and live (verified 2026-07-29) — this
+    // is now a defense-in-depth safety net, not a to-do. Confirmed via
+    // eve's own placeholderAuth() source: it hard-rejects (401) whenever
+    // VERCEL_ENV === "production", so it cannot itself pass unauthenticated
+    // traffic through in a real deployment.
     placeholderAuth(),
   ],
 });

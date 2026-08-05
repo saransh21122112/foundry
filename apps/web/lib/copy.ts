@@ -66,4 +66,5 @@ export const EVENT_TYPE_LABEL: Record<string, string> = {
   approval_rejected: "You rejected it",
   kill_switch_triggered: "Emergency pause triggered",
   kill_switch_resolved: "Emergency pause lifted",
+  subagent_delegated: "Delegated work to",
 };

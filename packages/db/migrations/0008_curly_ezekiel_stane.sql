@@ -1,0 +1,1 @@
+ALTER TYPE "public"."activity_event_type" ADD VALUE 'subagent_delegated';

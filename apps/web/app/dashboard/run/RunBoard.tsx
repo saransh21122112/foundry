@@ -48,6 +48,22 @@ function pendingKindFrom(requests: readonly EveInputRequest[] | undefined): Pend
 
 const LAST_SESSION_KEY = "foundry:lastRunSession";
 
+// How long a post-reply replay waits for the agent runtime to actually
+// resume before giving up and telling the user something might be stuck —
+// see replayTranscript's timeoutMs param. Only applied to reply-triggered
+// replays; the initial page-load replay has no ceiling since a long task
+// running for a while is normal, not a stall.
+const REPLY_STALL_TIMEOUT_MS = 25_000;
+
+/**
+ * Thrown by replayTranscript when timeoutMs elapses without reaching a
+ * genuine (post-minRestingIndex) resting point. A distinct type so
+ * runReplay's catch can tell "the runtime may not have picked this up"
+ * apart from a real fetch/network error, which gets the ordinary loadError
+ * treatment instead.
+ */
+class ReplyStallTimeoutError extends Error {}
+
 /** "3m ago" / "5h ago" / a date once it's more than a day old — for the task list. */
 function relativeTime(date: Date): string {
   const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
@@ -103,10 +119,18 @@ async function replayTranscript(
   // to do nothing. Pass the previous cursor here to force at least one
   // more poll until real new events show up.
   minRestingIndex = 0,
+  // See ReplyStallTimeoutError and REPLY_STALL_TIMEOUT_MS above — undefined
+  // (the default) means poll indefinitely, used for the initial page-load
+  // replay where there's no "this should have happened by now" ceiling.
+  timeoutMs?: number,
 ): Promise<number> {
   let cursor = 0;
+  const startedAt = Date.now();
 
   while (!shouldStop()) {
+    if (timeoutMs !== undefined && Date.now() - startedAt > timeoutMs) {
+      throw new ReplyStallTimeoutError("Timed out waiting for the agent runtime to resume.");
+    }
     const res = await fetch(`/api/agent-stream/${sessionId}?startIndex=${cursor}&includeTailIndex=1`);
     if (!res.ok || !res.body) {
       throw new Error(`Couldn't reach the agent runtime (${res.status}). Is it running?`);
@@ -196,6 +220,9 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
   const [reply, setReply] = useState("");
   const [sendingReply, setSendingReply] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Set when a post-reply replay hits REPLY_STALL_TIMEOUT_MS without the
+  // agent runtime resuming — see ReplyStallTimeoutError.
+  const [replyStalled, setReplyStalled] = useState(false);
   // Seeded from the server render (page.tsx) — no client fetch needed just
   // to show the list on first paint; refreshTasks() below only re-fetches
   // after something actually changes the list (a new task started).
@@ -210,17 +237,22 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
   // Cursor (event count) as of the end of the last completed replay — see
   // handleReply's use of this as minRestingIndex on the post-reply replay.
   const lastCursorRef = useRef(0);
+  // The token+message of the most recent reply attempt, kept independent of
+  // component state (which runReplay resets on every call) so "Try again"
+  // can resend the exact same pair after a stall.
+  const lastReplyRef = useRef<{ token: string; message: string } | null>(null);
 
   const refreshTasks = useCallback(() => {
     listTasks().then(setTasks).catch(() => {});
   }, []);
 
-  const runReplay = useCallback(async (sessionId: string, minRestingIndex = 0) => {
+  const runReplay = useCallback(async (sessionId: string, minRestingIndex = 0, timeoutMs?: number) => {
     activeSessionRef.current = sessionId;
     setLog([]);
     setPendingKind(null);
     setContinuationToken(null);
     setLoadError(null);
+    setReplyStalled(false);
     setRunning(true);
     try {
       const cursor = await replayTranscript(
@@ -230,10 +262,17 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
         (token) => setContinuationToken(token),
         () => activeSessionRef.current !== sessionId,
         minRestingIndex,
+        timeoutMs,
       );
       if (activeSessionRef.current === sessionId) lastCursorRef.current = cursor;
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : String(err));
+      if (activeSessionRef.current !== sessionId) {
+        // stale loop for an abandoned session — don't surface its error
+      } else if (err instanceof ReplyStallTimeoutError) {
+        setReplyStalled(true);
+      } else {
+        setLoadError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       if (activeSessionRef.current === sessionId) setRunning(false);
     }
@@ -244,6 +283,7 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
     if (!reply.trim() || !continuationToken || !sessionIdFromUrl || sendingReply) return;
     setSendingReply(true);
     try {
+      lastReplyRef.current = { token: continuationToken, message: reply };
       await sendFollowUp(sessionIdFromUrl, continuationToken, reply);
       setReply("");
       // Same event log, re-read from the top — the session's durable
@@ -252,9 +292,38 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
       // minRestingIndex forces the replay to keep polling until it sees a
       // resting point AFTER where we were before this reply, instead of
       // possibly racing the runtime and re-landing on the stale one.
-      await runReplay(sessionIdFromUrl, lastCursorRef.current);
+      // timeoutMs bounds that wait — eve's delivery model is best-effort
+      // (see ReplyStallTimeoutError), so an accepted reply isn't a
+      // guarantee the runtime actually resumed.
+      await runReplay(sessionIdFromUrl, lastCursorRef.current, REPLY_STALL_TIMEOUT_MS);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSendingReply(false);
+    }
+  }
+
+  /**
+   * Resends the exact same continuationToken+message after a stall. A
+   * thrown error here means the resend itself was rejected (e.g. eve's
+   * docs confirm a stale continuationToken is explicitly rejected) — the
+   * likeliest read is the original reply actually did land, so this is
+   * framed as "probably already worked," not a generic failure. A second
+   * stall (runReplay times out again without throwing here, since it
+   * catches its own ReplyStallTimeoutError internally) just re-shows the
+   * same stalled callout.
+   */
+  async function handleRetryReply() {
+    const pending = lastReplyRef.current;
+    if (!pending || !sessionIdFromUrl || sendingReply) return;
+    setSendingReply(true);
+    try {
+      await sendFollowUp(sessionIdFromUrl, pending.token, pending.message);
+      await runReplay(sessionIdFromUrl, lastCursorRef.current, REPLY_STALL_TIMEOUT_MS);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      setReplyStalled(false);
+      setLoadError(`Looks like your reply may already have gone through — check the transcript above. (${detail})`);
     } finally {
       setSendingReply(false);
     }
@@ -359,6 +428,17 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
         {pendingKind === "question" && (
           <div className="callout">
             Waiting for your answer — reply below to keep this task going.
+          </div>
+        )}
+        {replyStalled && (
+          <div className="callout" style={{ borderColor: "var(--ember-hot)" }}>
+            <p style={{ margin: "0 0 10px" }}>
+              Your reply was received, but the agent hasn&apos;t resumed yet — this can happen if it landed between
+              processing steps. Try sending it again, or wait a bit longer and reload.
+            </p>
+            <button type="button" className="btn" onClick={handleRetryReply} disabled={sendingReply}>
+              {sendingReply ? "Sending…" : "Try again"}
+            </button>
           </div>
         )}
 

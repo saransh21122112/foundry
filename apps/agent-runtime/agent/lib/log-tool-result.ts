@@ -86,3 +86,46 @@ export async function logToolResult(
     agentNodeId,
   });
 }
+
+/**
+ * `subagent.called` hook handler, registered alongside logToolResult in
+ * every one of the 13 agent/subagent hook files. Closes the gap where a
+ * task that's pure agent-to-agent delegation (no real tool call yet, which
+ * is most departments today) never wrote a row anywhere — /dashboard/graph
+ * only ever reads activity_log, so a run like that showed the calling
+ * department as active on /dashboard/run's own live transcript while
+ * appearing completely idle on graph. `subagent_delegated` is deliberately
+ * excluded from /dashboard/activity's own query (see that page) — it's a
+ * plain delegation, not a guardrails-relevant action, and Activity is
+ * meant to stay a record of the latter only.
+ *
+ * `event.data.name` (NOT `subagentName` — that field belongs to the
+ * sibling subagent.started/event/completed events, not this one; verified
+ * against eve's own SubagentCalledStreamEvent type) is the called
+ * subagent's name.
+ */
+export async function logSubagentDelegation(
+  event: HookEventMap["subagent.called"],
+  ctx: HookContext,
+  deps: Pick<GuardrailDeps, "logActivity"> = dbDeps,
+): Promise<void> {
+  const orgId = ctx.session.auth.current?.attributes?.orgId;
+  if (typeof orgId !== "string") return; // no org resolved on this session — nothing to attribute the row to
+
+  const agentName = ctx.agent.name;
+  const parentDepartment = PARENT_DEPARTMENT[agentName];
+  const department = parentDepartment ?? (DEPARTMENT_SET.has(agentName) ? (agentName as Department) : undefined);
+  if (!department) return; // root orchestrator's own name isn't a Department — nothing to attribute this to yet
+  const agentNodeId = parentDepartment ? `${parentDepartment}/${agentName}` : undefined;
+
+  const agentRunId = ctx.session.parent?.rootSessionId ?? ctx.session.id;
+
+  await deps.logActivity({
+    orgId,
+    department,
+    agentRunId,
+    eventType: "subagent_delegated",
+    toolName: event.data.name,
+    agentNodeId,
+  });
+}

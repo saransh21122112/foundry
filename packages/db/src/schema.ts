@@ -47,6 +47,12 @@ export const activityEventTypeEnum = pgEnum("activity_event_type", [
   "approval_rejected",
   "kill_switch_triggered",
   "kill_switch_resolved",
+  // Plain agent-to-agent delegation (eve's `subagent.called` event) — no
+  // guardrails decision involved, so distinct from every tool_call_* value
+  // above. Logged so /dashboard/graph can show a department as active
+  // during a run that's pure delegation (no real tool call yet); filtered
+  // back out of /dashboard/activity, which stays guardrail-events-only.
+  "subagent_delegated",
 ]);
 
 export const integrationStatusEnum = pgEnum("integration_status", [

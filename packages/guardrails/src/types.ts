@@ -78,7 +78,8 @@ export interface GuardrailDeps {
       | "tool_call_allowed"
       | "tool_call_blocked"
       | "tool_call_executed"
-      | "tool_call_failed";
+      | "tool_call_failed"
+      | "subagent_delegated";
     toolName: string;
     toolInput?: unknown;
     toolOutput?: unknown;

@@ -16,6 +16,12 @@ export async function startProCheckout(): Promise<never> {
   const { clerkOrgId, orgSlug } = await requireOrgAdmin();
   const org = await ensureOrganization({ clerkOrgId, slug: orgSlug ?? undefined });
 
+  // Same reasoning as packages/guardrails/src/deps-db.ts's APP_URL guard:
+  // fail loudly rather than silently sending a customer through Stripe
+  // Checkout to a success/cancel URL that resolves to localhost.
+  if (!process.env.NEXT_PUBLIC_APP_URL && process.env.VERCEL_ENV === "production") {
+    throw new Error("NEXT_PUBLIC_APP_URL is not set — refusing to start checkout with a broken redirect URL.");
+  }
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3311";
   const priceId = process.env.STRIPE_PRO_PRICE_ID;
   if (!priceId) {

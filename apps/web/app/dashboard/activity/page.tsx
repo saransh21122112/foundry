@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { auth } from "@clerk/nextjs/server";
 import { activityLog, db, ensureOrganization } from "@foundry/db";
 import { EVENT_TYPE_LABEL } from "@/lib/copy";
@@ -64,9 +64,14 @@ export default async function ActivityPage({
     })
     .from(activityLog)
     .where(
+      // subagent_delegated is deliberately excluded — plain agent-to-agent
+      // delegation, not a guardrails-relevant action. It shows on
+      // /dashboard/graph instead (see log-tool-result.ts's
+      // logSubagentDelegation). This page stays a record of actual
+      // attempted/gated/executed actions only.
       failedOnly
         ? and(eq(activityLog.orgId, org.id), eq(activityLog.eventType, FAILED_EVENT_TYPE))
-        : eq(activityLog.orgId, org.id),
+        : and(eq(activityLog.orgId, org.id), ne(activityLog.eventType, "subagent_delegated")),
     )
     .orderBy(desc(activityLog.timestamp))
     .limit(200);
