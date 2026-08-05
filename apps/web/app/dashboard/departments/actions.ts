@@ -19,7 +19,7 @@ const FREE_PLAN_MAX_DEPARTMENTS = 2;
  * enforces that beyond the schema's own default (`draft_only`). Worth a
  * second look once real customers exist.
  */
-export async function updateDepartmentConfig(formData: FormData) {
+export async function updateDepartmentConfig(formData: FormData): Promise<{ ok: true } | { ok: false; error: string }> {
   const { clerkOrgId, orgSlug } = await requireOrgAdmin();
 
   const department = formData.get("department");
@@ -32,7 +32,7 @@ export async function updateDepartmentConfig(formData: FormData) {
     typeof autonomyLevel !== "string" ||
     !AUTONOMY_LEVELS.includes(autonomyLevel as AutonomyLevel)
   ) {
-    throw new Error("Invalid form submission.");
+    return { ok: false, error: "Invalid form submission." };
   }
 
   const org = await ensureOrganization({ clerkOrgId, slug: orgSlug ?? undefined });
@@ -48,7 +48,7 @@ export async function updateDepartmentConfig(formData: FormData) {
 
   if (plan === "free") {
     if (autonomyLevel === "bounded_autonomous") {
-      throw new Error("Free plan is limited to Drafts only — upgrade to allow Fully autonomous.");
+      return { ok: false, error: "Free plan is limited to Drafts only — upgrade to allow Fully autonomous." };
     }
     if (enabled) {
       const otherEnabled = await db
@@ -56,7 +56,7 @@ export async function updateDepartmentConfig(formData: FormData) {
         .from(departmentConfigs)
         .where(and(eq(departmentConfigs.orgId, org.id), eq(departmentConfigs.enabled, true), ne(departmentConfigs.department, department as Department)));
       if (otherEnabled.length >= FREE_PLAN_MAX_DEPARTMENTS) {
-        throw new Error("Free plan is limited to 2 active departments — upgrade to enable more.");
+        return { ok: false, error: "Free plan is limited to 2 active departments — upgrade to enable more." };
       }
     }
   }
@@ -76,4 +76,5 @@ export async function updateDepartmentConfig(formData: FormData) {
   }
 
   revalidatePath("/dashboard/departments");
+  return { ok: true };
 }
