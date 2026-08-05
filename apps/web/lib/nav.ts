@@ -19,4 +19,5 @@ export const NAV = [
   { href: "/dashboard/tools", label: "Tool allowlist", blurb: "Turn off one specific action" },
   { href: "/dashboard/graph", label: "Live activity", blurb: "Who's working on what, right now" },
   { href: "/dashboard/activity", label: "Activity", blurb: "Everything that's happened" },
+  { href: "/dashboard/billing", label: "Billing", blurb: "Plan and upgrades" },
 ] as const;
