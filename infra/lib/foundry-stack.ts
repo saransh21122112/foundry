@@ -299,14 +299,22 @@ export class FoundryStack extends cdk.Stack {
     // session used by hand needs; `cdkDeployRole` (used only when infra/**
     // changes) is broader and kept separate so the everyday app-deploy path
     // stays minimally privileged.
-    const githubRepo = "saransh21122112/foundry";
     const githubOidcProvider = new iam.OpenIdConnectProvider(this, "GithubOidcProvider", {
       url: "https://token.actions.githubusercontent.com",
       clientIds: ["sts.amazonaws.com"],
     });
+    // GitHub's actual `sub` claim is NOT the plain `repo:owner/repo:ref:...`
+    // most docs/examples show — it's `repo:owner@USER_ID/repo@REPO_ID:ref:...`
+    // (GitHub appends stable numeric IDs to block a rename-based hijack of
+    // the trust condition). Confirmed live via CloudTrail after the exact
+    // string version was deployed and every assume-role attempt got denied:
+    // the real userName was
+    // "repo:saransh21122112@74602862/foundry@1319641243:ref:refs/heads/main".
+    // Wildcard around the IDs rather than hardcoding them — they're stable,
+    // but not something worth pinning as magic numbers.
     const githubOidcPrincipal = new iam.OpenIdConnectPrincipal(githubOidcProvider, {
       StringEquals: { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
-      StringLike: { "token.actions.githubusercontent.com:sub": `repo:${githubRepo}:ref:refs/heads/main` },
+      StringLike: { "token.actions.githubusercontent.com:sub": "repo:saransh21122112*/foundry*:ref:refs/heads/main" },
     });
 
     const dbMigrateRepo = ecr.Repository.fromRepositoryName(this, "DbMigrateRepo", "foundry-db-migrate");
