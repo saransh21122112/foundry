@@ -9,6 +9,7 @@ import * as efs from "aws-cdk-lib/aws-efs";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import * as iam from "aws-cdk-lib/aws-iam";
 
 // RDS's auto-generated Secrets Manager entry has no single connection-string
 // field, only discrete fields (host/port/dbname/username/password) — inject
@@ -290,11 +291,107 @@ export class FoundryStack extends cdk.Stack {
     });
     void webTargetGroup;
 
+    // --- GitHub Actions CI/CD: OIDC + deploy roles -----------------------
+    // No long-lived AWS keys stored in GitHub — a workflow run presents a
+    // short-lived OIDC token and assumes one of these roles instead. Two
+    // roles, not one: `deployRole` (used on every push) only has the exact
+    // permissions the manual build/push/migrate/redeploy sequence this
+    // session used by hand needs; `cdkDeployRole` (used only when infra/**
+    // changes) is broader and kept separate so the everyday app-deploy path
+    // stays minimally privileged.
+    const githubRepo = "saransh21122112/foundry";
+    const githubOidcProvider = new iam.OpenIdConnectProvider(this, "GithubOidcProvider", {
+      url: "https://token.actions.githubusercontent.com",
+      clientIds: ["sts.amazonaws.com"],
+    });
+    const githubOidcPrincipal = new iam.OpenIdConnectPrincipal(githubOidcProvider, {
+      StringEquals: { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
+      StringLike: { "token.actions.githubusercontent.com:sub": `repo:${githubRepo}:ref:refs/heads/main` },
+    });
+
+    const dbMigrateRepo = ecr.Repository.fromRepositoryName(this, "DbMigrateRepo", "foundry-db-migrate");
+
+    const deployRole = new iam.Role(this, "GithubDeployRole", {
+      roleName: "foundry-deploy",
+      assumedBy: githubOidcPrincipal,
+      description: "Assumed by GitHub Actions (push to main) to build/push images, run migrations, and redeploy ECS services.",
+    });
+    // ECR: GetAuthorizationToken has no resource-level permissions — AWS
+    // requires it be granted on "*" regardless of which repos are pushed to.
+    deployRole.addToPolicy(
+      new iam.PolicyStatement({ actions: ["ecr:GetAuthorizationToken"], resources: ["*"] }),
+    );
+    deployRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:PutImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+          "ecr:BatchGetImage",
+        ],
+        resources: [webRepo.repositoryArn, agentRepo.repositoryArn, dbMigrateRepo.repositoryArn],
+      }),
+    );
+    deployRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["ecs:UpdateService", "ecs:DescribeServices"],
+        resources: [webService.serviceArn, agentService.serviceArn],
+      }),
+    );
+    deployRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["ecs:RunTask"],
+        // Not CDK-managed (see packages/db/Dockerfile.migrate's own comment) —
+        // referenced by ARN pattern, same account/region as everything else.
+        resources: [`arn:aws:ecs:${this.region}:${this.account}:task-definition/foundry-db-migrate:*`],
+      }),
+    );
+    deployRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["ecs:DescribeTasks", "ecs:DescribeTaskDefinition"],
+        resources: ["*"],
+      }),
+    );
+    // ECS must be able to pass these roles to the tasks it starts/updates —
+    // the migrate task reuses WebTaskDef's own roles (see that task
+    // definition's executionRoleArn/taskRoleArn, registered out-of-band).
+    deployRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["iam:PassRole"],
+        resources: [
+          webTaskDef.taskRole.roleArn,
+          webTaskDef.executionRole!.roleArn,
+          agentTaskDef.taskRole.roleArn,
+          agentTaskDef.executionRole!.roleArn,
+        ],
+      }),
+    );
+
+    const cdkDeployRole = new iam.Role(this, "GithubCdkDeployRole", {
+      roleName: "foundry-cdk-deploy",
+      assumedBy: githubOidcPrincipal,
+      description: "Assumed by GitHub Actions (when infra/** changes) to run cdk deploy, via CDK's own bootstrap roles.",
+    });
+    // CDK's bootstrap roles (deploy/file-publishing/image-publishing/lookup)
+    // already hold the real CloudFormation/S3/ECR permissions needed to
+    // deploy this stack — the deploying identity only needs to assume them,
+    // not reimplement their policies here.
+    cdkDeployRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["sts:AssumeRole"],
+        resources: [`arn:aws:iam::${this.account}:role/cdk-hnb659fds-*-role-${this.account}-${this.region}`],
+      }),
+    );
+
     // --- Outputs --------------------------------------------------------
     new cdk.CfnOutput(this, "AlbDnsName", { value: alb.loadBalancerDnsName });
     new cdk.CfnOutput(this, "WebRepoUri", { value: webRepo.repositoryUri });
     new cdk.CfnOutput(this, "AgentRuntimeRepoUri", { value: agentRepo.repositoryUri });
     new cdk.CfnOutput(this, "DbSecretArn", { value: database.secret!.secretArn });
     new cdk.CfnOutput(this, "AppSecretsArn", { value: appSecrets.secretArn });
+    new cdk.CfnOutput(this, "GithubDeployRoleArn", { value: deployRole.roleArn });
+    new cdk.CfnOutput(this, "GithubCdkDeployRoleArn", { value: cdkDeployRole.roleArn });
   }
 }

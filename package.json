@@ -5,7 +5,8 @@
   "packageManager": "npm@11.16.0",
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "e2e"
   ],
   "scripts": {
     "build": "turbo run build",

@@ -1,0 +1,22 @@
+name: CI
+
+# Fast feedback for feature branches and PRs. Pushes to main are covered by
+# deploy.yml's own leading `test` job instead — running both here and there
+# on every main push would just double the work for no benefit.
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test

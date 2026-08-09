@@ -1,0 +1,133 @@
+name: Deploy
+
+# Auto-deploys to production AWS on every push to main, gated on the `test`
+# job passing first — matches how this app was actually deployed by hand
+# all session (deploy, then verify live), just automated. `infra` only runs
+# when infra/** changed, using a separate, more-privileged OIDC role than
+# `deploy` — see infra/lib/foundry-stack.ts's GithubDeployRole/
+# GithubCdkDeployRole for exactly what each role can do.
+#
+# Required repo configuration (Settings -> Secrets and variables -> Actions):
+#   Secrets: AWS_DEPLOY_ROLE_ARN, AWS_CDK_DEPLOY_ROLE_ARN
+#            (both are CfnOutputs from the CDK stack — GithubDeployRoleArn /
+#            GithubCdkDeployRoleArn — after `cdk deploy` creates them)
+#   Variables: AWS_REGION, ECS_CLUSTER_ARN, WEB_SERVICE_NAME,
+#              AGENT_SERVICE_NAME, MIGRATE_SUBNET_IDS (comma-separated),
+#              MIGRATE_SECURITY_GROUP_ID, CLERK_PUBLISHABLE_KEY
+#              (not secret — it's baked into the client bundle at build time)
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test
+
+  changes:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      infra: ${{ steps.filter.outputs.infra }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            infra:
+              - 'infra/**'
+
+  deploy-app:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build and push images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+        run: |
+          docker build --platform linux/amd64 -f apps/web/Dockerfile \
+            --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="$CLERK_PUBLISHABLE_KEY" \
+            -t "$REGISTRY/foundry-web:latest" .
+          docker build --platform linux/amd64 -f apps/agent-runtime/Dockerfile \
+            -t "$REGISTRY/foundry-agent-runtime:latest" .
+          docker build --platform linux/amd64 -f packages/db/Dockerfile.migrate \
+            -t "$REGISTRY/foundry-db-migrate:latest" .
+          docker push "$REGISTRY/foundry-web:latest"
+          docker push "$REGISTRY/foundry-agent-runtime:latest"
+          docker push "$REGISTRY/foundry-db-migrate:latest"
+
+      - name: Run DB migration (one-off Fargate task — RDS has no route from outside the VPC)
+        env:
+          CLUSTER: ${{ vars.ECS_CLUSTER_ARN }}
+          SUBNETS: ${{ vars.MIGRATE_SUBNET_IDS }}
+          SG: ${{ vars.MIGRATE_SECURITY_GROUP_ID }}
+        run: |
+          TASK_ARN=$(aws ecs run-task --cluster "$CLUSTER" --task-definition foundry-db-migrate \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+            --query "tasks[0].taskArn" --output text)
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+          EXIT_CODE=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[0].exitCode" --output text)
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Migration task exited with code $EXIT_CODE"
+            exit 1
+          fi
+
+      - name: Redeploy ECS services
+        env:
+          CLUSTER: ${{ vars.ECS_CLUSTER_ARN }}
+          WEB_SERVICE: ${{ vars.WEB_SERVICE_NAME }}
+          AGENT_SERVICE: ${{ vars.AGENT_SERVICE_NAME }}
+        run: |
+          aws ecs update-service --cluster "$CLUSTER" --service "$WEB_SERVICE" --force-new-deployment
+          aws ecs update-service --cluster "$CLUSTER" --service "$AGENT_SERVICE" --force-new-deployment
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$WEB_SERVICE" "$AGENT_SERVICE"
+
+  deploy-infra:
+    needs: [test, changes]
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CDK_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - working-directory: infra
+        run: npx cdk deploy --require-approval never
