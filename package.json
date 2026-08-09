@@ -6,7 +6,8 @@
   "workspaces": [
     "apps/*",
     "packages/*",
-    "e2e"
+    "e2e",
+    "infra"
   ],
   "scripts": {
     "build": "turbo run build",
