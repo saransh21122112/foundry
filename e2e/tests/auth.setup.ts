@@ -38,8 +38,15 @@ setup("authenticate", async ({ page }) => {
   if (!orgId) {
     throw new Error("E2E_CLERK_ORG_ID must be set (the org the E2E user is a member of).");
   }
+  // Clerk's setActive requires an explicit `session` unless one is already
+  // active on the client — pass it explicitly rather than relying on
+  // internal timing right after signIn() resolves (confirmed live: without
+  // it, Clerk throws "setActive should either be called with a session
+  // param or there should be already an active session").
   await page.evaluate(async (id) => {
-    await window.Clerk?.setActive({ organization: id });
+    const sessionId = window.Clerk?.session?.id;
+    if (!sessionId) throw new Error("No active Clerk session after sign-in.");
+    await window.Clerk?.setActive({ session: sessionId, organization: id });
   }, orgId);
 
   await page.goto("/dashboard/run");
