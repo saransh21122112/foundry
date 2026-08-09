@@ -305,16 +305,22 @@ export class FoundryStack extends cdk.Stack {
     });
     // GitHub's actual `sub` claim is NOT the plain `repo:owner/repo:ref:...`
     // most docs/examples show — it's `repo:owner@USER_ID/repo@REPO_ID:ref:...`
-    // (GitHub appends stable numeric IDs to block a rename-based hijack of
-    // the trust condition). Confirmed live via CloudTrail after the exact
-    // string version was deployed and every assume-role attempt got denied:
-    // the real userName was
+    // (GitHub appends stable numeric IDs specifically so a trust condition
+    // can't be bypassed by an attacker registering a same-prefixed account
+    // or repo, e.g. "saransh21122112999" or "foundry-evil"). Confirmed live
+    // via CloudTrail after an exact-string version was deployed and every
+    // assume-role attempt got denied: the real userName was
     // "repo:saransh21122112@74602862/foundry@1319641243:ref:refs/heads/main".
-    // Wildcard around the IDs rather than hardcoding them — they're stable,
-    // but not something worth pinning as magic numbers.
+    // Pinned via StringEquals on the exact IDs — the whole point of them
+    // being stable is that this is safe (not fragile) to hardcode, and an
+    // earlier version of this condition used an unanchored StringLike
+    // wildcard ("saransh21122112*/foundry*") that defeated that entire
+    // protection by matching any account/repo name with these as a prefix.
     const githubOidcPrincipal = new iam.OpenIdConnectPrincipal(githubOidcProvider, {
-      StringEquals: { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
-      StringLike: { "token.actions.githubusercontent.com:sub": "repo:saransh21122112*/foundry*:ref:refs/heads/main" },
+      StringEquals: {
+        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+        "token.actions.githubusercontent.com:sub": "repo:saransh21122112@74602862/foundry@1319641243:ref:refs/heads/main",
+      },
     });
 
     const dbMigrateRepo = ecr.Repository.fromRepositoryName(this, "DbMigrateRepo", "foundry-db-migrate");
