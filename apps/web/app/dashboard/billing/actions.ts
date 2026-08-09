@@ -19,7 +19,7 @@ export async function startProCheckout(): Promise<never> {
   // Same reasoning as packages/guardrails/src/deps-db.ts's APP_URL guard:
   // fail loudly rather than silently sending a customer through Stripe
   // Checkout to a success/cancel URL that resolves to localhost.
-  if (!process.env.NEXT_PUBLIC_APP_URL && process.env.VERCEL_ENV === "production") {
+  if (!process.env.NEXT_PUBLIC_APP_URL && process.env.NODE_ENV === "production") {
     throw new Error("NEXT_PUBLIC_APP_URL is not set — refusing to start checkout with a broken redirect URL.");
   }
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3311";

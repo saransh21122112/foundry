@@ -1,10 +1,12 @@
 import { eq } from "drizzle-orm";
 import { auth } from "@clerk/nextjs/server";
-import { db, departmentConfigs, ensureOrganization } from "@foundry/db";
+import { db, departmentConfigs, ensureOrganization, organizations } from "@foundry/db";
 import { AUTONOMY_LEVELS, DEPARTMENTS, type AutonomyLevel } from "@foundry/shared-types";
 import { AutonomyGauge } from "@/components/AutonomyGauge";
-import { AUTONOMY_DESCRIPTION, AUTONOMY_LABEL, DEPARTMENT_BLURB } from "@/lib/copy";
+import { AUTONOMY_DESCRIPTION, AUTONOMY_LABEL, AUTONOMY_SUGGESTION, DEPARTMENT_BLURB } from "@/lib/copy";
+import { computeAutonomySuggestion } from "@/lib/autonomy-suggestion";
 import { DepartmentForm } from "./DepartmentForm";
+import { dismissAutonomySuggestion } from "./actions";
 
 export default async function DepartmentsPage() {
   const { orgId: clerkOrgId, orgSlug } = await auth();
@@ -22,6 +24,20 @@ export default async function DepartmentsPage() {
   const rows = await db.select().from(departmentConfigs).where(eq(departmentConfigs.orgId, org.id));
   const configByDept = new Map(rows.map((r) => [r.department, r]));
 
+  const [orgRow] = await db.select({ plan: organizations.plan }).from(organizations).where(eq(organizations.id, org.id)).limit(1);
+  const plan = orgRow?.plan ?? "free";
+
+  // Only draft_only + enabled departments can even be promoted (the only
+  // real path is draft_only -> bounded_autonomous) — cheap enough to compute
+  // per-row, no batching needed at this scale.
+  const suggestions = new Map<string, Awaited<ReturnType<typeof computeAutonomySuggestion>>>();
+  for (const department of DEPARTMENTS) {
+    const config = configByDept.get(department);
+    if ((config?.enabled ?? false) && (config?.autonomyLevel ?? "draft_only") === "draft_only") {
+      suggestions.set(department, await computeAutonomySuggestion(org.id, department));
+    }
+  }
+
   return (
     <main>
       <p className="eyebrow">Heat allowed, per department</p>
@@ -36,6 +52,9 @@ export default async function DepartmentsPage() {
         const config = configByDept.get(department);
         const level = config?.autonomyLevel ?? "draft_only";
         const enabled = config?.enabled ?? false;
+        const suggestion = suggestions.get(department);
+        const showSuggestion = !!suggestion && suggestion.eligible && !suggestion.dismissed;
+        const radioGroupId = `autonomy-radios-${department}`;
         return (
           <div className="panel" key={department}>
             <DepartmentForm>
@@ -50,6 +69,36 @@ export default async function DepartmentsPage() {
                 </div>
                 <AutonomyGauge level={enabled ? level : "off"} />
               </div>
+
+              {showSuggestion && (
+                <div className="callout">
+                  <p style={{ margin: "0 0 10px", fontSize: 13 }}>
+                    {plan === "free" ? AUTONOMY_SUGGESTION.eligibleFreePlan : AUTONOMY_SUGGESTION.eligible}
+                  </p>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    {plan === "free" ? (
+                      <a href="/dashboard/billing" className="btn">
+                        Upgrade to Pro
+                      </a>
+                    ) : (
+                      <a href={`#${radioGroupId}`} className="btn">
+                        Review below
+                      </a>
+                    )}
+                    <form
+                      action={async (formData: FormData) => {
+                        "use server";
+                        await dismissAutonomySuggestion(formData);
+                      }}
+                    >
+                      <input type="hidden" name="department" value={department} />
+                      <button type="submit" className="btn">
+                        {AUTONOMY_SUGGESTION.dismiss}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              )}
 
               <label
                 style={{

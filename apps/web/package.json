@@ -6,10 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test lib/**/*.test.ts"
   },
   "dependencies": {
-    "@ai-sdk/gateway": "*",
+    "@ai-sdk/anthropic": "^2.0.0",
     "@clerk/nextjs": "^7.6.2",
     "@foundry/db": "*",
     "@foundry/guardrails": "*",

@@ -1,8 +1,9 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { list } from "@vercel/blob";
+import { ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { assertNotKilled } from "@foundry/guardrails";
 import { dbDeps } from "@foundry/guardrails/deps-db";
+import { s3, projectFilesBucket } from "../../../lib/s3-client";
 
 /**
  * Lists deliverables previously saved via save_project_file.ts, scoped to
@@ -32,16 +33,26 @@ export default defineTool({
     await assertNotKilled({ orgId, department: "eng-lead" }, dbDeps);
 
     const prefix = input.projectSlug ? `${orgId}/${input.projectSlug}/` : `${orgId}/`;
-    const { blobs } = await list({ access: "private", prefix, mode: "expanded" });
 
-    return {
-      files: blobs.map((b) => ({
-        // Strip the orgId prefix — the caller's own tools/DB never need it,
-        // and it shouldn't leak into what an agent then repeats back to a user.
-        path: b.pathname.slice(orgId.length + 1),
-        size: b.size,
-        uploadedAt: b.uploadedAt,
-      })),
-    };
+    const files: { path: string; size: number; uploadedAt: Date | undefined }[] = [];
+    let continuationToken: string | undefined;
+    do {
+      const page = await s3.send(
+        new ListObjectsV2Command({ Bucket: projectFilesBucket(), Prefix: prefix, ContinuationToken: continuationToken }),
+      );
+      for (const obj of page.Contents ?? []) {
+        if (!obj.Key) continue;
+        files.push({
+          // Strip the orgId prefix — the caller's own tools/DB never need it,
+          // and it shouldn't leak into what an agent then repeats back to a user.
+          path: obj.Key.slice(orgId.length + 1),
+          size: obj.Size ?? 0,
+          uploadedAt: obj.LastModified,
+        });
+      }
+      continuationToken = page.NextContinuationToken;
+    } while (continuationToken);
+
+    return { files };
   },
 });

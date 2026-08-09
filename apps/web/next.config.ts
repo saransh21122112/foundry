@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // standalone output for the Docker image — bundles only the traced
+  // dependency subset instead of shipping full node_modules.
+  output: "standalone",
   // packages/db and packages/guardrails ship raw TypeScript with no build
   // step (matches how eve consumes them too) — Next needs to know to
   // transpile them itself rather than treating them as pre-built JS.

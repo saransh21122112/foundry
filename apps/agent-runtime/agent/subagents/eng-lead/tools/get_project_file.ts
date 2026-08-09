@@ -1,8 +1,9 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { get } from "@vercel/blob";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { assertNotKilled } from "@foundry/guardrails";
 import { dbDeps } from "@foundry/guardrails/deps-db";
+import { s3, projectFilesBucket } from "../../../lib/s3-client";
 
 /**
  * Reads back a deliverable saved via save_project_file.ts. Scoped the same
@@ -27,16 +28,21 @@ export default defineTool({
     }
     await assertNotKilled({ orgId, department: "eng-lead" }, dbDeps);
 
-    const pathname = `${orgId}/${input.projectSlug}/${input.relativePath}`;
-    const blob = await get(pathname, { access: "private" });
-    if (!blob) {
-      throw new Error(`${input.relativePath} was not found in ${input.projectSlug}.`);
-    }
-    if (blob.statusCode !== 200) {
-      throw new Error(`Could not read ${input.relativePath} (status ${blob.statusCode}).`);
-    }
+    const key = `${orgId}/${input.projectSlug}/${input.relativePath}`;
 
-    const contents = await new Response(blob.stream).text();
-    return { path: input.relativePath, contents };
+    try {
+      const object = await s3.send(new GetObjectCommand({ Bucket: projectFilesBucket(), Key: key }));
+      const contents = await object.Body?.transformToString();
+      if (contents === undefined) {
+        throw new Error(`Could not read ${input.relativePath} — empty response body.`);
+      }
+      return { path: input.relativePath, contents };
+    } catch (err) {
+      const name = err instanceof Error ? err.name : "";
+      if (name === "NoSuchKey") {
+        throw new Error(`${input.relativePath} was not found in ${input.projectSlug}.`);
+      }
+      throw err instanceof Error ? err : new Error(String(err));
+    }
   },
 });

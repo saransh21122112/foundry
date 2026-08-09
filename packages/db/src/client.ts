@@ -1,21 +1,28 @@
-import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import { Pool } from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema.js";
+import { RDS_CA_BUNDLE } from "./rds-ca-bundle.js";
 
-// Not provisioned yet — DATABASE_URL needs a real Neon connection string
-// (Saransh's Vercel Marketplace account, Phase 1). Reading this file /
-// importing `db` before that's set throws at call time, not at import time,
-// so packages/guardrails can still be unit-tested against fakes without a
-// live database.
+// DATABASE_URL (local dev) or PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD
+// (ECS — RDS's auto-generated Secrets Manager entry has no single
+// connection-string field, only discrete fields) points at RDS Postgres.
+// Reading this file / importing `db` before either is set throws at call
+// time, not at import time, so packages/guardrails can still be
+// unit-tested against fakes without a live database.
+let pool: Pool | undefined;
 function getDb() {
   const url = process.env.DATABASE_URL;
-  if (!url) {
+  if (!url && !process.env.PGHOST) {
     throw new Error(
-      "DATABASE_URL is not set. Provision Neon Postgres (Vercel Marketplace) " +
-        "and set DATABASE_URL before using @foundry/db's live client.",
+      "DATABASE_URL (or PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD) is not set. " +
+        "Provision RDS Postgres and set it before using @foundry/db's live client.",
     );
   }
-  return drizzle(neon(url), { schema });
+  // RDS enforces SSL (pg_hba.conf rejects plaintext connections) — pg's
+  // Pool doesn't enable it by default the way Neon's driver did. Validate
+  // against AWS's actual RDS CA bundle rather than disabling verification.
+  pool ??= url ? new Pool({ connectionString: url }) : new Pool({ ssl: { ca: RDS_CA_BUNDLE } });
+  return drizzle(pool, { schema });
 }
 
 export const client = { getDb };

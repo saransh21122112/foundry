@@ -521,6 +521,9 @@ label {
 .transcript-entry-pending .transcript-label {
   color: var(--ember-hot);
 }
+.transcript-entry-tool .transcript-label {
+  color: var(--cool);
+}
 .transcript-label {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -695,5 +698,29 @@ label {
 @media (max-width: 960px) {
   .hero-art {
     display: none;
+  }
+}
+
+/* --- Print — /dashboard/compliance/report ---------------------------------
+   Dark theme doesn't survive to paper: force a plain light printout and hide
+   the dashboard chrome (sidebar rail, print trigger itself) so only the
+   report content ends up on the page. */
+@media print {
+  .rail,
+  .no-print {
+    display: none !important;
+  }
+  .main {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  .panel {
+    border-color: #ccc !important;
+    background: #fff !important;
+    color: #111 !important;
   }
 }

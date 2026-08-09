@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1
+# One-off migration runner — build context must be the monorepo root:
+# docker build -f packages/db/Dockerfile.migrate .
+# Not part of the normal app deploy path; run manually as a one-shot ECS
+# task inside the VPC (RDS has no route from outside it).
+
+FROM node:24-alpine AS pruner
+WORKDIR /repo
+RUN npm i -g turbo
+COPY . .
+RUN turbo prune @foundry/db --docker
+
+FROM node:24-alpine
+WORKDIR /repo
+COPY --from=pruner /repo/out/json/ .
+RUN npm install
+COPY --from=pruner /repo/out/full/ .
+WORKDIR /repo/packages/db
+CMD ["npx", "tsx", "src/migrate.ts"]

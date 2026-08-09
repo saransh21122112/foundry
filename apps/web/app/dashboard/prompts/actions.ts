@@ -1,39 +1,46 @@
 "use server";
 
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import { generateText } from "ai";
-import { gateway } from "@ai-sdk/gateway";
+import { anthropic } from "@ai-sdk/anthropic";
 import { agentPromptOverrides, db, ensureOrganization, organizations } from "@foundry/db";
 import { requireOrgAdmin } from "@/lib/authz";
 import { AGENT_PROMPTS } from "./agents";
 
 /**
- * apps/web's process.cwd() at runtime is apps/web itself, and
- * apps/agent-runtime is its sibling (both direct children of apps/) — this
- * only works because it's the same local checkout on the same disk. Never
- * a path from the client: only an allowlisted agentId looked up here maps
- * to a hardcoded path. Default content now lives in agent-runtime's
- * instructions.default.ts (a `export default "..."` string constant, kept
- * that way so the agent-runtime bundles it reliably at runtime) rather
- * than instructions.md — read as plain text and sliced out of the export,
- * since this is a read-only fallback, not something this action ever
- * parses as real TS.
+ * apps/web and apps/agent-runtime run as two separate containers in
+ * production (web on ECS Fargate, agent-runtime on ECS EC2) with no shared
+ * filesystem, so this can no longer read agent-runtime's
+ * instructions.default.ts files off local disk (that assumption held only
+ * in local dev, where both apps happen to be the same checkout on the same
+ * disk — broke live in prod as a real ENOENT 500 on this page, 2026-08-06).
+ * Fetches the default content over HTTP instead, from a small custom eve
+ * channel exposed by agent-runtime for exactly this
+ * (apps/agent-runtime/agent/channels/prompt-defaults.ts) — same
+ * fetch-with-bearer-token pattern this app already uses for the same
+ * cross-service boundary elsewhere (apps/web/lib/eve-client.ts,
+ * apps/web/app/dashboard/run/actions.ts). `bearerToken` is the calling
+ * admin's own Clerk session token (see requireOrgAdmin), so agent-runtime's
+ * clerkOrgSession() route auth resolves the same caller rather than needing
+ * a separate service credential.
  */
-function resolveDefaultPath(agentId: string): string {
+async function readDefaultPrompt(agentId: string, bearerToken: string): Promise<string> {
   const entry = AGENT_PROMPTS.find((a) => a.id === agentId);
   if (!entry) throw new Error(`Unknown agentId: ${agentId}`);
-  return path.join(process.cwd(), "..", "agent-runtime", entry.path.replace(/instructions\.md$/, "instructions.default.ts"));
-}
 
-async function readDefaultPrompt(agentId: string): Promise<string> {
-  const raw = await readFile(resolveDefaultPath(agentId), "utf-8");
-  // File is `export default ${JSON.stringify(content)};\n` — the JSON string
-  // literal is the one line of actual payload.
-  const match = raw.match(/export default (".*");\s*$/s);
-  if (!match) throw new Error(`Could not parse default instructions for ${agentId}`);
-  return JSON.parse(match[1]);
+  const runtimeUrl = process.env.AGENT_RUNTIME_URL;
+  if (!runtimeUrl) {
+    throw new Error("AGENT_RUNTIME_URL is not set — point it at the running eve agent-runtime.");
+  }
+
+  const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/eve/v1/prompt-defaults/${encodeURIComponent(agentId)}`, {
+    headers: { authorization: `Bearer ${bearerToken}` },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch default instructions for ${agentId}: ${res.status} ${await res.text()}`);
+  }
+  const { content } = (await res.json()) as { content: string };
+  return content;
 }
 
 /**
@@ -43,7 +50,7 @@ async function readDefaultPrompt(agentId: string): Promise<string> {
  * actually told at runtime.
  */
 export async function readAgentPrompt(agentId: string): Promise<string> {
-  const { clerkOrgId, orgSlug } = await requireOrgAdmin();
+  const { clerkOrgId, orgSlug, getToken } = await requireOrgAdmin();
   const org = await ensureOrganization({ clerkOrgId, slug: orgSlug ?? undefined });
 
   const [override] = await db
@@ -51,7 +58,11 @@ export async function readAgentPrompt(agentId: string): Promise<string> {
     .from(agentPromptOverrides)
     .where(and(eq(agentPromptOverrides.orgId, org.id), eq(agentPromptOverrides.agentId, agentId)));
 
-  return override?.content ?? readDefaultPrompt(agentId);
+  if (override) return override.content;
+
+  const token = await getToken();
+  if (!token) throw new Error("Could not get a session token.");
+  return readDefaultPrompt(agentId, token);
 }
 
 /**
@@ -102,8 +113,8 @@ export async function saveOrgProfile(description: string, website: string): Prom
  * Drafts a revised instructions.md from a plain-English change request (e.g.
  * "give this agent permission to post to Slack" or "make it always ask
  * before touching production data") — same model eve itself runs on
- * (`anthropic/claude-sonnet-5` via the Vercel AI Gateway, same
- * AI_GATEWAY_API_KEY apps/agent-runtime already uses).
+ * (`claude-sonnet-5` via the direct Anthropic API, same ANTHROPIC_API_KEY
+ * apps/agent-runtime already uses).
  *
  * Deliberately does NOT save anything — returns the proposed text so it
  * lands back in the editor's textarea for review/further editing, and only
@@ -117,7 +128,7 @@ export async function generatePromptEdit(agentId: string, changeRequest: string)
   const current = await readAgentPrompt(agentId);
 
   const { text } = await generateText({
-    model: gateway("anthropic/claude-sonnet-5"),
+    model: anthropic("claude-sonnet-5"),
     system:
       "You rewrite AI agent instruction files (instructions.md — plain markdown system prompts for an autonomous agent). " +
       "You will be given the CURRENT full content of the file and a CHANGE REQUEST describing what to add, change, or grant. " +

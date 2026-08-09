@@ -2,8 +2,13 @@
 
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { randomBytes } from "node:crypto";
 import { db, ensureOrganization, integrations } from "@foundry/db";
 import { requireOrgAdmin } from "@/lib/authz";
+
+const GITHUB_OAUTH_STATE_COOKIE = "github_oauth_state";
 
 /**
  * Saves (or replaces) this org's outbound webhook connection — a
@@ -74,6 +79,71 @@ export async function removeWebhookConnection() {
   await db
     .delete(integrations)
     .where(and(eq(integrations.orgId, org.id), eq(integrations.provider, "webhook")));
+
+  revalidatePath("/dashboard/connections");
+}
+
+/**
+ * Starts the GitHub OAuth App flow. `state` is a plain random anti-CSRF
+ * nonce, not a signed identity token — the callback route re-derives the
+ * org from the live Clerk session (same as every other action in this
+ * file), not from anything in the redirect URL, so `state` only needs to
+ * prove the callback is answering *this* browser's own request, matching
+ * the value stashed in an httpOnly cookie here.
+ */
+export async function startGithubConnect(): Promise<never> {
+  await requireOrgAdmin();
+
+  const clientId = process.env.GITHUB_OAUTH_CLIENT_ID;
+  if (!clientId) {
+    throw new Error("GITHUB_OAUTH_CLIENT_ID is not configured.");
+  }
+  if (!process.env.NEXT_PUBLIC_APP_URL && process.env.NODE_ENV === "production") {
+    throw new Error("NEXT_PUBLIC_APP_URL is not set — refusing to start an OAuth flow with a broken callback URL.");
+  }
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3311";
+
+  // `secure` must match whether the app is actually served over https, not
+  // just NODE_ENV — this ALB currently has no TLS listener (plain http://),
+  // and a Secure cookie is silently never sent back by the browser over
+  // plain http, which made every callback fail state verification
+  // (confirmed live: state_mismatch on every attempt). Deriving from
+  // NEXT_PUBLIC_APP_URL means this becomes correct automatically once TLS
+  // is added, without another code change.
+  const state = randomBytes(32).toString("hex");
+  (await cookies()).set(GITHUB_OAUTH_STATE_COOKIE, state, {
+    httpOnly: true,
+    secure: appUrl.startsWith("https://"),
+    sameSite: "lax",
+    maxAge: 600,
+    path: "/",
+  });
+
+  const authorizeUrl = new URL("https://github.com/login/oauth/authorize");
+  authorizeUrl.searchParams.set("client_id", clientId);
+  authorizeUrl.searchParams.set("redirect_uri", `${appUrl}/dashboard/connections/github/callback`);
+  authorizeUrl.searchParams.set("scope", "repo");
+  authorizeUrl.searchParams.set("state", state);
+
+  redirect(authorizeUrl.toString());
+}
+
+/**
+ * Deletes this org's GitHub connection outright, same reasoning as
+ * removeWebhookConnection — nothing reads a "revoked" row, so there's no
+ * value in keeping one around instead of just deleting it. This does not
+ * revoke the token on GitHub's side (GitHub OAuth Apps have no App-driven
+ * revoke-on-behalf-of-user endpoint without asking for admin:org-level
+ * scopes we don't otherwise need) — the stored copy is gone, which is what
+ * this app can actually promise.
+ */
+export async function disconnectGithub() {
+  const { clerkOrgId, orgSlug } = await requireOrgAdmin();
+  const org = await ensureOrganization({ clerkOrgId, slug: orgSlug ?? undefined });
+
+  await db
+    .delete(integrations)
+    .where(and(eq(integrations.orgId, org.id), eq(integrations.provider, "github")));
 
   revalidatePath("/dashboard/connections");
 }

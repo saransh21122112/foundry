@@ -62,12 +62,12 @@ async function notifyAdminsOfApproval(input: {
   }
 
   // apps/agent-runtime can't read Next's NEXT_PUBLIC_ vars, so it gets its
-  // own APP_URL — set correctly on the deployed agent-runtime project as of
-  // 2026-08-05. Only fall back to localhost outside a real deployment
-  // (mirrors channels/eve.ts's placeholderAuth() VERCEL_ENV check); in
-  // production a missing APP_URL should fail loudly rather than silently
-  // emailing every org owner/admin a broken localhost link.
-  if (!process.env.APP_URL && process.env.VERCEL_ENV === "production") {
+  // own APP_URL — set on the deployed agent-runtime container's task
+  // definition. Only fall back to localhost outside a real deployment; in
+  // production (NODE_ENV, set by both apps' Dockerfiles) a missing APP_URL
+  // should fail loudly rather than silently emailing every org owner/admin
+  // a broken localhost link.
+  if (!process.env.APP_URL && process.env.NODE_ENV === "production") {
     throw new Error("APP_URL is not set — refusing to send an approval-notification email with a broken link.");
   }
   const appUrl = process.env.APP_URL ?? "http://localhost:3311";

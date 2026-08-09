@@ -26,6 +26,14 @@ export const AUTONOMY_DESCRIPTION: Record<AutonomyLevel, string> = {
     "This department can act on its own, automatically, as long as it stays inside the budget and tool limits you've set below. A few things always stop for your approval regardless: spending beyond a cap, deleting anything, and legal or financial commitments.",
 };
 
+/** Shown next to a department's autonomy radios once its last 10 approvals
+ * all came back approved — informational only, never pre-selects anything. */
+export const AUTONOMY_SUGGESTION = {
+  eligible: "The last 10 approvals for this department were all approved, none rejected. It might be ready for more autonomy — you'd still need to turn that on yourself below.",
+  eligibleFreePlan: "This department has earned more autonomy — upgrade to Pro to unlock it.",
+  dismiss: "Dismiss",
+};
+
 /** `approval_requests.reason` is a free-text code from enforce() — translate it. */
 export const APPROVAL_REASON_LABEL: Record<string, string> = {
   draft_mode: "This department is set to “Drafts only,” so this needed your OK before it could run.",
@@ -55,6 +63,22 @@ export const RISK_CLASS_DESCRIPTION: Record<RiskClass, string> = {
   financial: "Spends money or commits to a cost. Always needs your approval.",
   legal: "Legal or contractual weight. Always needs your approval.",
 };
+
+/** apps/web/app/dashboard/compliance/* — the audit export flagship feature. */
+export const COMPLIANCE_COPY = {
+  upsellTitle: "Compliance export is a Pro feature",
+  upsellBody:
+    "Generate a signed-off record proving every irreversible, financial, or legal action your agents took had your OK first — and that everything you rejected actually stayed rejected. Upgrade to Pro to turn this on.",
+  upsellCta: "Upgrade to Pro",
+  claimALabel: "Every high-risk action had prior approval",
+  claimBLabel: "Every rejected high-risk attempt was honored",
+  noHardRiskRows:
+    "No irreversible, financial, or legal actions were attempted this period — nothing to reconcile, and that's a true reading of the record, not a placeholder.",
+  exportCta: "Export JSON",
+  reportCta: "Open printable report",
+  integrityNote:
+    "The content hash is a SHA-256 fingerprint of every row in this report. The underlying log is append-only — nothing has ever updated or deleted a row in it — so a mismatched hash on a later re-export means the input rows changed, not that this report was tampered with after the fact.",
+} as const;
 
 export const EVENT_TYPE_LABEL: Record<string, string> = {
   tool_call_attempted: "Tried to run",

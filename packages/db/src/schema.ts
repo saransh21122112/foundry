@@ -6,6 +6,7 @@ import {
   timestamp,
   jsonb,
   numeric,
+  integer,
   uuid,
   index,
   uniqueIndex,
@@ -276,6 +277,27 @@ export const agentPromptOverrides = pgTable("agent_prompt_overrides", {
   orgAgentIdx: uniqueIndex("agent_prompt_overrides_org_agent_idx").on(t.orgId, t.agentId),
 }));
 
+/**
+ * One row per generated compliance export — a receipt, not the report
+ * itself (the report is recomputed fresh from activity_log/approval_requests
+ * every time, see apps/web/lib/compliance.ts). Exists so an org can prove
+ * *when* an export was pulled and by whom, and so contentHash gives a
+ * tamper-evidence check against a copy of the report handed to a third
+ * party (insurer/board/customer) later.
+ */
+export const complianceExports = pgTable("compliance_exports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id),
+  generatedByClerkUserId: text("generated_by_clerk_user_id").notNull(),
+  periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+  periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+  rowCount: integer("row_count").notNull(),
+  contentHash: text("content_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgCreatedIdx: index("compliance_exports_org_created_idx").on(t.orgId, t.createdAt),
+}));
+
 // ---------------------------------------------------------------------------
 // Integrations & kill switch
 // ---------------------------------------------------------------------------
@@ -289,6 +311,12 @@ export const integrations = pgTable("integrations", {
   // `config` below) has no token at all, and no OAuth provider is wired up
   // yet either.
   connectTokenRef: text("connect_token_ref"),
+  // Self-hosted alternative to connectTokenRef, used where we don't want a
+  // Vercel Connect dependency (see provider="github" — this app removed
+  // every other Vercel dependency earlier in its life, not reintroducing
+  // one just for OAuth storage). AES-256-GCM ciphertext, base64-encoded —
+  // see packages/db/src/crypto.ts. Never the raw token.
+  encryptedToken: text("encrypted_token"),
   // Provider-specific, non-secret config that isn't a token — e.g.
   // provider="webhook" stores `{ url: string }` here (a customer-owned
   // Slack/Discord/Zapier incoming-webhook URL, not something we consider

@@ -1,12 +1,13 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { put } from "@vercel/blob";
-import { assertNotKilled } from "@foundry/guardrails";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { makeApprovalPolicy } from "@foundry/guardrails";
 import { dbDeps } from "@foundry/guardrails/deps-db";
+import { s3, projectFilesBucket } from "../../../lib/s3-client";
 
 /**
- * Writes a real deliverable to this org's own namespace in Vercel Blob
- * (private access), at `<orgId>/<projectSlug>/<relativePath>`. Distinct
+ * Writes a real deliverable to this org's own namespace in S3 (private,
+ * SSE-encrypted bucket), at `<orgId>/<projectSlug>/<relativePath>`. Distinct
  * from eve's default sandbox (ephemeral, container-local, gone once the
  * session ends): this survives past the session — and, unlike a plain
  * `node:fs` write, past the request too. A Serverless Function has no
@@ -26,13 +27,19 @@ import { dbDeps } from "@foundry/guardrails/deps-db";
  * activityLog.orgId) — no reason a shared file store should be the one
  * place that isn't.
  *
- * riskClass "reversible-low" (same reasoning as get_activity_summary.ts):
- * creating a new file is as reversible as any other draft, so no `approval`
- * field, just the kill-switch check every reversible-low tool still owes.
- * `allowOverwrite: false` (Blob's own default) refuses to clobber an
- * existing file rather than gating on approval — keeps a runaway agent
- * from overwriting earlier output while still needing no human in the loop
- * for the common case of writing something new.
+ * riskClass "reversible-high" (2026-08-07 reclassification — this was
+ * previously "reversible-low", which let it skip enforce() entirely: no
+ * autonomy-level gating, no budget cap, no allowlist. A durable write to a
+ * real S3 bucket is a genuine side effect, same shape as send_email.ts /
+ * post_webhook.ts, so it now goes through `approval: makeApprovalPolicy`
+ * like those two. `IfNoneMatch: "*"` still refuses to clobber an existing
+ * file regardless of the approval outcome — belt-and-suspenders against a
+ * runaway agent overwriting earlier output.
+ *
+ * No standalone `assertNotKilled()` call here — enforce() (invoked via the
+ * `approval` policy below) already checks the kill switch, department
+ * enabled, and autonomy level before this tool's `execute()` ever runs
+ * (see enforce.ts steps 1-3). Calling it again here would be dead code.
  *
  * Real tool_call_executed/tool_call_failed outcomes are logged generically
  * by the action.result eve hook (see
@@ -47,28 +54,42 @@ export default defineTool({
     relativePath: z.string().min(1).refine((p) => !p.includes(".."), "relativePath may not contain '..'"),
     contents: z.string(),
   }),
+  approval: makeApprovalPolicy(
+    {
+      department: "eng-lead",
+      riskClass: "reversible-high",
+      estimatedCost: { unit: "files_saved", amount: 1 },
+    },
+    dbDeps,
+  ),
   async execute(input, ctx) {
     const orgId = ctx.session.auth.current?.attributes?.orgId;
     if (typeof orgId !== "string") {
+      // Shouldn't happen — the approval policy above already denies
+      // no-org sessions before execute() ever runs.
       throw new Error("No organization resolved on this session.");
     }
-    await assertNotKilled({ orgId, department: "eng-lead" }, dbDeps);
 
-    const pathname = `${orgId}/${input.projectSlug}/${input.relativePath}`;
+    const key = `${orgId}/${input.projectSlug}/${input.relativePath}`;
 
     try {
-      const blob = await put(pathname, input.contents, {
-        access: "private",
-        addRandomSuffix: false,
-        allowOverwrite: false,
-      });
-      return { saved: true, path: blob.pathname, url: blob.url };
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: projectFilesBucket(),
+          Key: key,
+          Body: input.contents,
+          IfNoneMatch: "*",
+        }),
+      );
+      return { saved: true, path: key };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const failMessage = message.toLowerCase().includes("exist")
-        ? `${input.relativePath} already exists in ${input.projectSlug} — use a different name, or ask the user before overwriting.`
-        : message;
-      throw new Error(failMessage);
+      const name = err instanceof Error ? err.name : "";
+      if (name === "PreconditionFailed") {
+        throw new Error(
+          `${input.relativePath} already exists in ${input.projectSlug} — use a different name, or ask the user before overwriting.`,
+        );
+      }
+      throw err instanceof Error ? err : new Error(String(err));
     }
   },
 });

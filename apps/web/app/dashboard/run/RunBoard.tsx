@@ -6,8 +6,24 @@ import Link from "next/link";
 import { startTask, sendFollowUp, listTasks } from "./actions";
 
 interface LogEntry {
-  kind: "you" | "system" | "agent" | "pending";
+  kind: "you" | "system" | "agent" | "pending" | "tool";
   text: string;
+}
+
+/**
+ * Tools worth showing as "an action happened" lines — mirrors
+ * apps/agent-runtime/agent/lib/log-tool-result.ts's SKIP_TOOL_NAMES so the
+ * transcript doesn't get noisy with pure reads/bookkeeping (read_file, glob,
+ * todo, etc.) that Activity itself doesn't log either.
+ */
+const SKIP_TOOL_NAMES = new Set(["read_file", "glob", "grep", "todo", "agent", "load_skill", "ask_question"]);
+
+/** `{ saved: true, path }` (save_project_file's own shape) → "saved <path>"; falls back to a generic label. */
+function summarizeToolOutput(output: unknown): string {
+  if (output && typeof output === "object" && typeof (output as Record<string, unknown>).path === "string") {
+    return `saved ${(output as Record<string, unknown>).path}`;
+  }
+  return "done";
 }
 
 interface Task {
@@ -44,6 +60,73 @@ type PendingKind = "approval" | "question" | null;
 function pendingKindFrom(requests: readonly EveInputRequest[] | undefined): PendingKind {
   if (!requests || requests.length === 0) return null;
   return requests.every((r) => r.action?.toolName === "ask_question") ? "question" : "approval";
+}
+
+/**
+ * Handles one stream event for the transcript. Recurses into
+ * `subagent.event` (eve tunnels a delegated subagent's own event stream
+ * under this wrapper — see node_modules/eve/dist/src/protocol/message.d.ts's
+ * SubagentChildEventStreamEvent) so a nested subagent's own tool calls (e.g.
+ * swe-lead delegating to frontend-developer, which is where
+ * save_project_file actually runs) show up too, not just the top-level
+ * "Delegating to X…" line. `subagentPath` accumulates the chain of names
+ * for that recursion so a two-levels-deep call reads
+ * "swe-lead > frontend-developer called save_project_file → saved …".
+ */
+function emitFromEvent(
+  event: EveEvent,
+  subagentPath: readonly string[],
+  onEntry: (entry: LogEntry) => void,
+  onPending: (kind: PendingKind) => void,
+  onWaiting: (continuationToken: string) => void,
+): void {
+  if (event.type === "message.received") {
+    const text = event.data?.message as string | undefined;
+    if (text) onEntry({ kind: "you", text });
+  } else if (event.type === "subagent.called") {
+    onEntry({ kind: "system", text: `Delegating to ${event.data?.name as string}…` });
+  } else if (event.type === "subagent.event") {
+    const childEvent = event.data?.event as EveEvent | undefined;
+    const subagentName = event.data?.subagentName as string | undefined;
+    if (childEvent) {
+      emitFromEvent(childEvent, subagentName ? [...subagentPath, subagentName] : subagentPath, onEntry, onPending, onWaiting);
+    }
+  } else if (event.type === "action.result") {
+    const result = event.data?.result as { kind?: string; toolName?: string; output?: unknown } | undefined;
+    const status = event.data?.status as string | undefined;
+    if (result?.kind === "tool-result" && result.toolName && !SKIP_TOOL_NAMES.has(result.toolName)) {
+      const label = subagentPath.length > 0 ? `${subagentPath.join(" > ")} called` : "Called";
+      if (status === "completed") {
+        onEntry({ kind: "tool", text: `${label} ${result.toolName} → ${summarizeToolOutput(result.output)}` });
+      } else if (status === "rejected" || status === "failed") {
+        const error = event.data?.error as { message?: string } | undefined;
+        onEntry({
+          kind: "system",
+          text: `${result.toolName} was blocked: ${error?.message ?? (status === "rejected" ? "denied by guardrails" : "failed")}`,
+        });
+      }
+    }
+  } else if (event.type === "message.completed") {
+    const text = event.data?.message as string | undefined;
+    if (text) onEntry({ kind: "agent", text });
+  } else if (event.type === "input.requested") {
+    const requests = event.data?.requests as readonly EveInputRequest[] | undefined;
+    const kind = pendingKindFrom(requests);
+    onPending(kind);
+    onEntry({
+      kind: "pending",
+      text:
+        kind === "question"
+          ? "Paused — waiting for your answer to keep this going."
+          : "Paused — this needs your approval before it can go further.",
+    });
+  } else if (event.type === "step.failed" || event.type === "turn.failed" || event.type === "session.failed") {
+    const failMessage = (event.data as { message?: string } | undefined)?.message;
+    onEntry({ kind: "system", text: `Something went wrong: ${failMessage ?? event.type}` });
+  } else if (event.type === "session.waiting") {
+    const token = event.data?.continuationToken as string | undefined;
+    if (token) onWaiting(token);
+  }
 }
 
 const LAST_SESSION_KEY = "foundry:lastRunSession";
@@ -157,33 +240,7 @@ async function replayTranscript(
         index++;
 
         const event = JSON.parse(line) as EveEvent;
-
-        if (event.type === "message.received") {
-          const text = event.data?.message as string | undefined;
-          if (text) onEntry({ kind: "you", text });
-        } else if (event.type === "subagent.called") {
-          onEntry({ kind: "system", text: `Delegating to ${event.data?.name as string}…` });
-        } else if (event.type === "message.completed") {
-          const text = event.data?.message as string | undefined;
-          if (text) onEntry({ kind: "agent", text });
-        } else if (event.type === "input.requested") {
-          const requests = event.data?.requests as readonly EveInputRequest[] | undefined;
-          const kind = pendingKindFrom(requests);
-          onPending(kind);
-          onEntry({
-            kind: "pending",
-            text:
-              kind === "question"
-                ? "Paused — waiting for your answer to keep this going."
-                : "Paused — this needs your approval before it can go further.",
-          });
-        } else if (event.type === "step.failed" || event.type === "turn.failed" || event.type === "session.failed") {
-          const failMessage = (event.data as { message?: string } | undefined)?.message;
-          onEntry({ kind: "system", text: `Something went wrong: ${failMessage ?? event.type}` });
-        } else if (event.type === "session.waiting") {
-          const token = event.data?.continuationToken as string | undefined;
-          if (token) onWaiting(token);
-        }
+        emitFromEvent(event, [], onEntry, onPending, onWaiting);
 
         if (
           (event.type === "session.completed" || event.type === "session.failed" || event.type === "session.waiting") &&
@@ -449,7 +506,15 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
               {log.map((entry, i) => (
                 <div key={i} className={`transcript-entry-${entry.kind}`}>
                   <span className="transcript-label">
-                    {entry.kind === "you" ? "You" : entry.kind === "agent" ? "Foundry" : entry.kind === "pending" ? "Paused" : "System"}
+                    {entry.kind === "you"
+                      ? "You"
+                      : entry.kind === "agent"
+                        ? "Foundry"
+                        : entry.kind === "pending"
+                          ? "Paused"
+                          : entry.kind === "tool"
+                            ? "Action"
+                            : "System"}
                   </span>
                   <p className="transcript-body">{entry.text}</p>
                 </div>
