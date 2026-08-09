@@ -17,11 +17,17 @@ import { resolveGithubToken } from "../../../lib/github-connection-auth";
  * (either handing the sandbox's bash/git a live credential, or building
  * commits via GitHub's Git Data API through this same connection) — not
  * attempted here.
+ *
+ * `repos/list-for-authenticated-user` added alongside a real `clone_repo`
+ * tool (../tools/clone_repo.ts) that DOES hand the sandbox's git a live
+ * credential — the tradeoff flagged above, now accepted for this specific,
+ * narrow case (cloning the org's own connected repos), not opened up
+ * generally.
  */
 export default defineOpenAPIConnection({
   spec: "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json",
   baseUrl: "https://api.github.com",
-  description: "Read issues and pull requests, and post comments, in this organization's connected GitHub account.",
+  description: "Read issues, pull requests, and repository metadata, and post comments, in this organization's connected GitHub account.",
   operations: {
     allow: [
       "issues/list-for-repo",
@@ -30,6 +36,7 @@ export default defineOpenAPIConnection({
       "issues/create-comment",
       "pulls/list",
       "pulls/get",
+      "repos/list-for-authenticated-user",
     ],
   },
   auth: (ctx) => ({

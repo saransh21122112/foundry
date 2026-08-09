@@ -47,7 +47,11 @@ export type RiskClass = (typeof RISK_CLASSES)[number];
  * allowlist editor should only offer gated tools.
  */
 export const KNOWN_TOOLS: Record<Department, Array<{ name: string; riskClass: RiskClass; gated: boolean }>> = {
-  "eng-lead": [{ name: "save_project_file", riskClass: "reversible-high", gated: true }],
+  "eng-lead": [
+    { name: "save_project_file", riskClass: "reversible-high", gated: true },
+    { name: "clone_repo", riskClass: "reversible-high", gated: true },
+    { name: "generate_repos_xlsx", riskClass: "reversible-high", gated: true },
+  ],
   "product-lead": [],
   researcher: [{ name: "publish_research", riskClass: "reversible-high", gated: true }],
   "ops-manager": [
