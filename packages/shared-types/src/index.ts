@@ -51,6 +51,7 @@ export const KNOWN_TOOLS: Record<Department, Array<{ name: string; riskClass: Ri
     { name: "save_project_file", riskClass: "reversible-high", gated: true },
     { name: "clone_repo", riskClass: "reversible-high", gated: true },
     { name: "generate_repos_xlsx", riskClass: "reversible-high", gated: true },
+    { name: "list_public_github_repos", riskClass: "reversible-low", gated: false },
   ],
   "product-lead": [],
   researcher: [{ name: "publish_research", riskClass: "reversible-high", gated: true }],

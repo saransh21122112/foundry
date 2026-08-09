@@ -7,7 +7,10 @@ name: E2E
 #   Secrets: E2E_CLERK_USER_EMAIL, E2E_CLERK_USER_PASSWORD (seeded Clerk
 #            test user — see e2e/README.md), CLERK_SECRET_KEY,
 #            SLACK_WEBHOOK_URL (optional — failure notifications only)
-#   Variables: BASE_URL (the ALB DNS name), CLERK_PUBLISHABLE_KEY
+#   Variables: BASE_URL (the ALB DNS name), CLERK_PUBLISHABLE_KEY,
+#              E2E_CLERK_ORG_ID (the org the E2E user is a member of —
+#              being a member isn't enough, Clerk sessions track an
+#              *active* org separately, see tests/auth.setup.ts)
 
 on:
   schedule:
@@ -53,6 +56,7 @@ jobs:
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           E2E_CLERK_USER_EMAIL: ${{ secrets.E2E_CLERK_USER_EMAIL }}
           E2E_CLERK_USER_PASSWORD: ${{ secrets.E2E_CLERK_USER_PASSWORD }}
+          E2E_CLERK_ORG_ID: ${{ vars.E2E_CLERK_ORG_ID }}
       - uses: actions/upload-artifact@v4
         if: always() && steps.creds.outputs.configured == 'true'
         with:

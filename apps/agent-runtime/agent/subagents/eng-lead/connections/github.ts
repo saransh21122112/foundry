@@ -23,6 +23,24 @@ import { resolveGithubToken } from "../../../lib/github-connection-auth";
  * credential — the tradeoff flagged above, now accepted for this specific,
  * narrow case (cloning the org's own connected repos), not opened up
  * generally.
+ *
+ * KNOWN UPSTREAM BUG (eve 0.27.10): `operations.allow` below does NOT
+ * actually filter anything. Traced live: `OpenApiConnectionClient`
+ * (node_modules/eve/dist/src/runtime/connections/openapi-client.js) reads
+ * its filter off `this.#n.tools`, but `defineOpenAPIConnection`'s config
+ * field is named `operations`, not `tools` (the MCP client variant
+ * correctly reads `.tools` — this looks like a copy-paste that was never
+ * renamed for the OpenAPI variant). Since the config object has no `.tools`
+ * property, the filter is always `undefined` and every one of GitHub's
+ * ~1,220 spec operations is exposed to `connection_search`, not just the
+ * ~7 listed here. The `approval` gate below still applies to every call
+ * regardless (that's a separate mechanism, unaffected), so this isn't a
+ * guardrails bypass — but it does mean the model can *discover* far more
+ * than intended, and crowds out operations that should rank well in search
+ * (this is why `repos/list-for-authenticated-user` wasn't reliably found
+ * by the model in practice — see ../tools/list_public_github_repos.ts,
+ * built as a working fallback rather than depending on this being fixed).
+ * Real fix is upstream in vercel/eve; not something to patch around here.
  */
 export default defineOpenAPIConnection({
   spec: "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json",

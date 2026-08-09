@@ -4,10 +4,10 @@ Playwright tests against the real deployed stack (no local dev server). Runs in 
 
 ## One-time manual setup
 
-1. **Seed a Clerk test user**: in the Clerk dashboard, create a real user with password auth enabled, add them to a real org, and give them the `org:admin` role. `@clerk/testing` signs this user in headlessly — it does not create the user or provision org membership.
+1. **Seed a Clerk test user**: in the Clerk dashboard (or via the Backend API), create a real user with password auth enabled, add them to a real org, and give them the `org:admin` role. `@clerk/testing` signs this user in headlessly — it does not create the user or provision org membership.
 2. **Set GitHub Actions repo configuration** (Settings → Secrets and variables → Actions):
    - Secrets: `E2E_CLERK_USER_EMAIL`, `E2E_CLERK_USER_PASSWORD` (the seeded user above), `CLERK_SECRET_KEY`, `SLACK_WEBHOOK_URL` (optional, failure notifications).
-   - Variables: `BASE_URL` (the ALB DNS name), `CLERK_PUBLISHABLE_KEY`.
+   - Variables: `BASE_URL` (the ALB DNS name), `CLERK_PUBLISHABLE_KEY`, `E2E_CLERK_ORG_ID` (the org ID from step 1 — being a *member* of an org isn't enough on its own; Clerk sessions track an *active* org separately, and every page here reads `auth()`'s `orgId`. Without this, `tests/auth.setup.ts` signs in successfully but every subsequent test hits the app's "sign in and select an organization" empty state instead of real content — confirmed live as the root cause of an entire first E2E run failing across unrelated-looking tests).
 
 ## Running locally
 
@@ -19,6 +19,7 @@ NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_... \
 CLERK_SECRET_KEY=sk_test_... \
 E2E_CLERK_USER_EMAIL=... \
 E2E_CLERK_USER_PASSWORD=... \
+E2E_CLERK_ORG_ID=org_... \
 npx playwright test
 ```
 
