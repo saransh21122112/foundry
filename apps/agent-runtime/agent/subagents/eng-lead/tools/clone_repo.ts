@@ -29,10 +29,18 @@ export default defineTool({
     "Clone a repository from this organization's connected GitHub account into the sandbox workspace. " +
     "Use the clone_url from repos/list-for-authenticated-user or a PR/issue's repository field.",
   inputSchema: z.object({
+    // Fully anchored to GitHub's actual owner/repo charset — not just a
+    // `.url()` + prefix check. That weaker check let query strings/fragments
+    // through, and since cloneUrl is interpolated inside double quotes in
+    // the shell command below, bash still expands `$(...)`/backticks/`$VAR`
+    // even inside double quotes — a real command-injection vector caught by
+    // security review before this shipped.
     cloneUrl: z
       .string()
-      .url()
-      .refine((u) => u.startsWith("https://github.com/"), "must be an https://github.com/ clone URL"),
+      .regex(
+        /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?$/,
+        "must be an https://github.com/OWNER/REPO(.git) clone URL",
+      ),
     targetDir: z
       .string()
       .min(1)
