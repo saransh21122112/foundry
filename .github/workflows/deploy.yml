@@ -30,6 +30,24 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Same throwaway Postgres service as ci.yml — packages/db's test suite
+    # runs real queries and has no fake-DB layer. Not the real RDS instance
+    # (no route from outside its VPC).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: foundry_test
+          POSTGRES_PASSWORD: foundry_test
+          POSTGRES_DB: foundry_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://foundry_test:foundry_test@localhost:5432/foundry_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -38,6 +56,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npx tsx packages/db/src/migrate.ts
       - run: npm run test
 
   changes:
