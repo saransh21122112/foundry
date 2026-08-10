@@ -202,6 +202,10 @@ export class FoundryStack extends cdk.Stack {
         GITHUB_TOKEN_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(appSecrets, "GITHUB_TOKEN_ENCRYPTION_KEY"),
         GOOGLE_OAUTH_CLIENT_ID: ecs.Secret.fromSecretsManager(appSecrets, "GOOGLE_OAUTH_CLIENT_ID"),
         GOOGLE_OAUTH_CLIENT_SECRET: ecs.Secret.fromSecretsManager(appSecrets, "GOOGLE_OAUTH_CLIENT_SECRET"),
+        // Non-secret (just the @handle shown on /dashboard/connections),
+        // still sourced from appSecrets so there's one place to update it —
+        // the actual bot token lives only in agent-runtime's secrets below.
+        TELEGRAM_BOT_USERNAME: ecs.Secret.fromSecretsManager(appSecrets, "TELEGRAM_BOT_USERNAME"),
       },
     });
     webContainer.addPortMappings({ containerPort: 3000 });
@@ -269,6 +273,12 @@ export class FoundryStack extends cdk.Stack {
         TWILIO_ACCOUNT_SID: ecs.Secret.fromSecretsManager(appSecrets, "TWILIO_ACCOUNT_SID"),
         TWILIO_AUTH_TOKEN: ecs.Secret.fromSecretsManager(appSecrets, "TWILIO_AUTH_TOKEN"),
         TWILIO_FROM_NUMBER: ecs.Secret.fromSecretsManager(appSecrets, "TWILIO_FROM_NUMBER"),
+        // Platform-level, one bot for every org (agent/channels/telegram.ts,
+        // agent/lib/telegram-link.ts) — see DEPLOY.md for the one-time
+        // `setWebhook` registration step this doesn't do automatically.
+        TELEGRAM_BOT_TOKEN: ecs.Secret.fromSecretsManager(appSecrets, "TELEGRAM_BOT_TOKEN"),
+        TELEGRAM_WEBHOOK_SECRET_TOKEN: ecs.Secret.fromSecretsManager(appSecrets, "TELEGRAM_WEBHOOK_SECRET_TOKEN"),
+        TELEGRAM_BOT_USERNAME: ecs.Secret.fromSecretsManager(appSecrets, "TELEGRAM_BOT_USERNAME"),
       },
     });
     agentContainer.addPortMappings({ containerPort: 3000 });

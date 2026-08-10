@@ -46,21 +46,40 @@ export type RiskClass = (typeof RISK_CLASSES)[number];
  * allowlist row for a non-gated tool has no effect, so the dashboard's
  * allowlist editor should only offer gated tools.
  */
+/**
+ * remember/recall/forget (packages/agent-runtime's agent/lib/memory-tools.ts)
+ * are registered identically for every department — cross-session memory,
+ * ungated same as get_activity_summary/get_daily_ops_digest.
+ */
+const MEMORY_TOOLS: Array<{ name: string; riskClass: RiskClass; gated: boolean }> = [
+  { name: "remember", riskClass: "reversible-low", gated: false },
+  { name: "recall", riskClass: "reversible-low", gated: false },
+  { name: "forget", riskClass: "reversible-low", gated: false },
+];
+
 export const KNOWN_TOOLS: Record<Department, Array<{ name: string; riskClass: RiskClass; gated: boolean }>> = {
   "eng-lead": [
     { name: "save_project_file", riskClass: "reversible-high", gated: true },
     { name: "clone_repo", riskClass: "reversible-high", gated: true },
     { name: "generate_repos_xlsx", riskClass: "reversible-high", gated: true },
     { name: "list_public_github_repos", riskClass: "reversible-low", gated: false },
+    { name: "run_code", riskClass: "reversible-high", gated: true },
+    ...MEMORY_TOOLS,
   ],
-  "product-lead": [],
-  researcher: [{ name: "publish_research", riskClass: "reversible-high", gated: true }],
+  "product-lead": [...MEMORY_TOOLS],
+  researcher: [{ name: "publish_research", riskClass: "reversible-high", gated: true }, ...MEMORY_TOOLS],
   "ops-manager": [
     { name: "post_webhook", riskClass: "reversible-high", gated: true },
     { name: "get_daily_ops_digest", riskClass: "reversible-low", gated: false },
+    { name: "get_company_digest", riskClass: "reversible-low", gated: false },
+    { name: "get_setup_changelog", riskClass: "reversible-low", gated: false },
+    { name: "list_calendar_events", riskClass: "reversible-low", gated: false },
+    { name: "place_call", riskClass: "financial", gated: true },
+    { name: "get_call_result", riskClass: "reversible-low", gated: false },
+    ...MEMORY_TOOLS,
   ],
-  "design-lead": [],
-  "data-lead": [{ name: "get_activity_summary", riskClass: "reversible-low", gated: false }],
-  "sales-lead": [{ name: "send_email", riskClass: "reversible-high", gated: true }],
-  "swe-lead": [{ name: "save_project_file", riskClass: "reversible-high", gated: true }],
+  "design-lead": [...MEMORY_TOOLS],
+  "data-lead": [{ name: "get_activity_summary", riskClass: "reversible-low", gated: false }, ...MEMORY_TOOLS],
+  "sales-lead": [{ name: "send_email", riskClass: "reversible-high", gated: true }, ...MEMORY_TOOLS],
+  "swe-lead": [{ name: "save_project_file", riskClass: "reversible-high", gated: true }, ...MEMORY_TOOLS],
 };

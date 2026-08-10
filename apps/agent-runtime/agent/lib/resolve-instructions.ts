@@ -1,6 +1,7 @@
 import { defineDynamic, defineInstructions } from "eve/instructions";
-import { and, eq } from "drizzle-orm";
-import { db, agentPromptOverrides, organizations } from "@foundry/db";
+import { and, eq, desc } from "drizzle-orm";
+import { db, agentPromptOverrides, organizations, agentMemories } from "@foundry/db";
+import type { Department } from "@foundry/shared-types";
 
 /**
  * Builds the "## About this organization" section prepended to every
@@ -15,6 +16,23 @@ function buildOrgPreamble(description: string | null, website: string | null): s
   if (description) lines.push(description, "");
   if (website) lines.push(`Website: ${website}`, "");
   return lines.join("\n") + "\n";
+}
+
+/**
+ * eve has no cross-session memory primitive (defineState is session-scoped
+ * only — see node_modules/eve/docs/patterns/multi-tenant-memory.md, which
+ * documents exactly this inject-on-session-start pattern). Written by the
+ * remember/recall/forget tools (agent/subagents/<dept>/tools/), scoped to
+ * the department root (a nested subagent like "swe-lead/frontend-developer"
+ * shares its parent's memory rather than getting its own silo — the enum
+ * this table's `department` column is bound to only has the 8 top-level
+ * departments, see @foundry/shared-types' DEPARTMENTS).
+ */
+function buildMemoryPreamble(memories: Array<{ key: string; value: string }>): string {
+  if (memories.length === 0) return "";
+  const lines = ["## Things you remember", ""];
+  for (const m of memories) lines.push(`- **${m.key}**: ${m.value}`);
+  return lines.join("\n") + "\n\n";
 }
 
 /**
@@ -34,7 +52,8 @@ export function resolveInstructions(agentId: string, defaultMarkdown: string) {
       "session.started": async (_event, ctx) => {
         const orgId = ctx.session.auth.current?.attributes?.orgId;
         if (typeof orgId === "string") {
-          const [[override], [org]] = await Promise.all([
+          const rootDepartment = agentId.split("/")[0] as Department;
+          const [[override], [org], memories] = await Promise.all([
             db
               .select({ content: agentPromptOverrides.content })
               .from(agentPromptOverrides)
@@ -43,9 +62,15 @@ export function resolveInstructions(agentId: string, defaultMarkdown: string) {
               .select({ description: organizations.description, website: organizations.website })
               .from(organizations)
               .where(eq(organizations.id, orgId)),
+            db
+              .select({ key: agentMemories.key, value: agentMemories.value })
+              .from(agentMemories)
+              .where(and(eq(agentMemories.orgId, orgId), eq(agentMemories.department, rootDepartment)))
+              .orderBy(desc(agentMemories.updatedAt)),
           ]);
           const preamble = buildOrgPreamble(org?.description ?? null, org?.website ?? null);
-          const markdown = preamble + (override ? override.content : defaultMarkdown);
+          const memoryPreamble = buildMemoryPreamble(memories);
+          const markdown = preamble + memoryPreamble + (override ? override.content : defaultMarkdown);
           return defineInstructions({ markdown });
         }
         return defineInstructions({ markdown: defaultMarkdown });

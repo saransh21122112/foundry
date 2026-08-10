@@ -18,6 +18,7 @@ export const NAV = [
   { href: "/dashboard/connections", label: "Connections", blurb: "Outbound webhooks (Slack/Discord/Zapier)" },
   { href: "/dashboard/tools", label: "Tool allowlist", blurb: "Turn off one specific action" },
   { href: "/dashboard/graph", label: "Live activity", blurb: "Who's working on what, right now" },
+  { href: "/dashboard/kpis", label: "Live metrics", blurb: "Tool calls, approvals, and budget spend, last 24h" },
   { href: "/dashboard/activity", label: "Activity", blurb: "Everything that's happened" },
   { href: "/dashboard/compliance", label: "Compliance", blurb: "Proof every risky action had sign-off" },
   { href: "/dashboard/billing", label: "Billing", blurb: "Plan and upgrades" },

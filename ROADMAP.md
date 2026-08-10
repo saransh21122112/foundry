@@ -331,6 +331,10 @@ requests to it. `eve build` confirmed the nested subagent compiles.
   whole safety story for the product, worth an external review before real
   customer integrations go live.
 - Platform-level rate limiting/abuse prevention (Vercel Firewall).
+- Skills marketplace — designed in full in
+  [`SKILLS_MARKETPLACE.md`](./SKILLS_MARKETPLACE.md), not built yet. Browse/
+  install reusable per-department skills (eve's native `Skill` primitive),
+  copy-on-install, org-scoped.
 
 ## Open decisions only Saransh can make (don't guess these)
 

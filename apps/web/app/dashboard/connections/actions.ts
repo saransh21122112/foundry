@@ -4,11 +4,12 @@ import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import { db, ensureOrganization, integrations } from "@foundry/db";
 import { requireOrgAdmin } from "@/lib/authz";
 
 const GITHUB_OAUTH_STATE_COOKIE = "github_oauth_state";
+const GOOGLE_OAUTH_STATE_COOKIE = "google_oauth_state";
 
 /**
  * Saves (or replaces) this org's outbound webhook connection — a
@@ -144,6 +145,116 @@ export async function disconnectGithub() {
   await db
     .delete(integrations)
     .where(and(eq(integrations.orgId, org.id), eq(integrations.provider, "github")));
+
+  revalidatePath("/dashboard/connections");
+}
+
+/**
+ * Starts the Google OAuth flow for read-only Calendar access. Same
+ * state-cookie CSRF pattern as startGithubConnect. `access_type=offline`
+ * + `prompt=consent` are required to actually get a `refresh_token` back
+ * on the token exchange — Google only issues one on the *first* consent
+ * for a given client+user unless `prompt=consent` forces a fresh one, and
+ * without offline access it issues no refresh token at all (Google's
+ * short-lived ~1hr access tokens would otherwise die silently between
+ * scheduled runs).
+ */
+export async function startGoogleCalendarConnect(): Promise<never> {
+  await requireOrgAdmin();
+
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  if (!clientId) {
+    throw new Error("GOOGLE_OAUTH_CLIENT_ID is not configured.");
+  }
+  if (!process.env.NEXT_PUBLIC_APP_URL && process.env.NODE_ENV === "production") {
+    throw new Error("NEXT_PUBLIC_APP_URL is not set — refusing to start an OAuth flow with a broken callback URL.");
+  }
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3311";
+
+  const state = randomBytes(32).toString("hex");
+  (await cookies()).set(GOOGLE_OAUTH_STATE_COOKIE, state, {
+    httpOnly: true,
+    secure: appUrl.startsWith("https://"),
+    sameSite: "lax",
+    maxAge: 600,
+    path: "/",
+  });
+
+  const authorizeUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  authorizeUrl.searchParams.set("client_id", clientId);
+  authorizeUrl.searchParams.set("redirect_uri", `${appUrl}/dashboard/connections/google-calendar/callback`);
+  authorizeUrl.searchParams.set("response_type", "code");
+  authorizeUrl.searchParams.set("scope", "https://www.googleapis.com/auth/calendar.readonly");
+  authorizeUrl.searchParams.set("access_type", "offline");
+  authorizeUrl.searchParams.set("prompt", "consent");
+  authorizeUrl.searchParams.set("state", state);
+
+  redirect(authorizeUrl.toString());
+}
+
+export async function disconnectGoogleCalendar() {
+  const { clerkOrgId, orgSlug } = await requireOrgAdmin();
+  const org = await ensureOrganization({ clerkOrgId, slug: orgSlug ?? undefined });
+
+  await db
+    .delete(integrations)
+    .where(and(eq(integrations.orgId, org.id), eq(integrations.provider, "google_calendar")));
+
+  revalidatePath("/dashboard/connections");
+}
+
+const TELEGRAM_LINK_CODE_TTL_MS = 15 * 60_000;
+
+/**
+ * Generates a fresh /link <code> for this org and stores it as a
+ * "pending" integrations row — the same row agent/lib/telegram-link.ts's
+ * consumeLinkCode() activates once the org actually sends the code to the
+ * bot. Platform-level bot (TELEGRAM_BOT_TOKEN lives in agent-runtime's own
+ * env, not here) — this action never touches the bot token itself, it
+ * only writes the code the admin needs to type into Telegram.
+ */
+export async function generateTelegramLinkCode() {
+  const { userId, clerkOrgId, orgSlug } = await requireOrgAdmin();
+  const org = await ensureOrganization({ clerkOrgId, slug: orgSlug ?? undefined });
+
+  // CSPRNG, not Math.random() — flagged by automated security review
+  // (Math.random() is predictable, and this code gates cross-org message
+  // routing, not a cosmetic id). 10 chars over this 33-char alphabet is
+  // ~50 bits of entropy (33^10), matching the reviewer's suggested floor.
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I
+  let code = "";
+  for (let i = 0; i < 10; i++) code += alphabet[randomInt(alphabet.length)];
+  const config = { linkCode: code, linkCodeExpiresAt: new Date(Date.now() + TELEGRAM_LINK_CODE_TTL_MS).toISOString() };
+
+  const existing = await db
+    .select({ id: integrations.id })
+    .from(integrations)
+    .where(and(eq(integrations.orgId, org.id), eq(integrations.provider, "telegram")))
+    .limit(1);
+
+  if (existing[0]) {
+    await db
+      .update(integrations)
+      .set({ status: "pending", config, connectedByClerkUserId: userId })
+      .where(eq(integrations.id, existing[0].id));
+  } else {
+    await db.insert(integrations).values({
+      orgId: org.id,
+      provider: "telegram",
+      status: "pending",
+      config,
+      connectedByClerkUserId: userId,
+    });
+  }
+
+  revalidatePath("/dashboard/connections");
+}
+
+export async function disconnectTelegram() {
+  const { clerkOrgId, orgSlug } = await requireOrgAdmin();
+  const org = await ensureOrganization({ clerkOrgId, slug: orgSlug ?? undefined });
+
+  await db.delete(integrations).where(and(eq(integrations.orgId, org.id), eq(integrations.provider, "telegram")));
 
   revalidatePath("/dashboard/connections");
 }

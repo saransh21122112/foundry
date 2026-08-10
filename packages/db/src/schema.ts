@@ -60,6 +60,10 @@ export const integrationStatusEnum = pgEnum("integration_status", [
   "active",
   "revoked",
   "expired",
+  // A generated-but-not-yet-confirmed link code, waiting for the org to
+  // actually message the bot (see agent/lib/telegram-link.ts) — no
+  // credential/session should ever route through a "pending" row.
+  "pending",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -129,6 +133,30 @@ export const departmentSettings = pgTable("department_settings", {
   value: jsonb("value").notNull(),
 }, (t) => ({
   orgDeptKeyIdx: uniqueIndex("department_settings_org_dept_key_idx").on(
+    t.orgId,
+    t.department,
+    t.key,
+  ),
+}));
+
+/**
+ * Cross-session, per-department memory — the thing eve itself doesn't
+ * provide (defineState is session-scoped only; see
+ * node_modules/eve/docs/patterns/multi-tenant-memory.md). Read into every
+ * new session's instructions by
+ * apps/agent-runtime/agent/lib/resolve-instructions.ts, written by the
+ * remember/recall/forget tools shared across departments.
+ */
+export const agentMemories = pgTable("agent_memories", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id),
+  department: departmentEnum("department").notNull(),
+  key: text("key").notNull(),
+  value: text("value").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  orgDeptKeyIdx: uniqueIndex("agent_memories_org_dept_key_idx").on(
     t.orgId,
     t.department,
     t.key,

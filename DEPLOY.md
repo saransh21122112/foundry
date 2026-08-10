@@ -49,6 +49,43 @@ classifier blocks interactive `cdk deploy`.
 5. **Optional:** `SLACK_WEBHOOK_URL` secret, for e2e failure notifications
    (`.github/workflows/e2e.yml` posts to it on failure if set).
 
+6. **Optional, for the Google Calendar connection** (`/dashboard/connections`):
+   add `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` as keys in
+   the `foundry/app-secrets` Secrets Manager secret (both apps' task
+   definitions already read them — see `infra/lib/foundry-stack.ts`).
+   Register an OAuth 2.0 Client ID in Google Cloud Console, enable the
+   Calendar API, and add `<BASE_URL>/dashboard/connections/google-calendar/callback`
+   as an authorized redirect URI. `GITHUB_TOKEN_ENCRYPTION_KEY` (already set)
+   is reused to encrypt the Google token too — no separate key needed.
+
+7. **Optional, for the voice phone-call agent** (`place_call`/`get_call_result`
+   tools, ops-manager): add `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and
+   `TWILIO_FROM_NUMBER` (a Twilio phone number capable of outbound calls) as
+   keys in `foundry/app-secrets`. Requires a real Twilio account and a
+   purchased phone number — a paid third-party signup only a human can
+   complete, no infra/code work unblocks it. Platform-level credentials
+   (Foundry's own Twilio account), not per-org — every org's calls place
+   through the same number and bill to the same account, worth revisiting
+   before a second real customer relies on this. Without these set,
+   `place_call` fails with a clear "not configured" error rather than a
+   crash.
+
+8. **Optional, for the Telegram channel** (`agent/channels/telegram.ts`):
+   create a bot via [@BotFather](https://t.me/BotFather) (`/newbot`), add
+   `TELEGRAM_BOT_TOKEN`, a random `TELEGRAM_WEBHOOK_SECRET_TOKEN` (any
+   long random string — eve checks it on every inbound webhook), and
+   `TELEGRAM_BOT_USERNAME` (no `@`, shown on `/dashboard/connections`) to
+   `foundry/app-secrets`. Then register the webhook once (eve doesn't do
+   this itself):
+   ```bash
+   curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
+     -d "url=<BASE_URL>/eve/v1/telegram" \
+     -d "secret_token=<TELEGRAM_WEBHOOK_SECRET_TOKEN>"
+   ```
+   Platform-level bot (one for every org, same model as Twilio) — an org
+   links its own chat via a short-lived code from `/dashboard/connections`,
+   not a per-org bot token.
+
 ## 2. Normal deploy
 
 Once bootstrap is done:
