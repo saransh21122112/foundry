@@ -63,6 +63,7 @@ export const KNOWN_TOOLS: Record<Department, Array<{ name: string; riskClass: Ri
     { name: "clone_repo", riskClass: "reversible-high", gated: true },
     { name: "generate_repos_xlsx", riskClass: "reversible-high", gated: true },
     { name: "list_public_github_repos", riskClass: "reversible-low", gated: false },
+    { name: "list_my_github_repos", riskClass: "reversible-low", gated: false },
     { name: "run_code", riskClass: "reversible-high", gated: true },
     ...MEMORY_TOOLS,
   ],
