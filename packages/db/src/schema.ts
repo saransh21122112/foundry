@@ -281,6 +281,11 @@ export const runSessions = pgTable("run_sessions", {
   // history, fetched fresh when a task is opened).
   title: text("title").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // v1 kanban grouping for /dashboard/calendar — free-text, nullable, no
+  // default and no enum on purpose: nothing writes it yet except a manual
+  // status change from that page, and existing rows should just read as
+  // "unset" rather than needing a backfill.
+  status: text("status"),
 }, (t) => ({
   orgCreatedIdx: index("run_sessions_org_created_idx").on(t.orgId, t.createdAt),
 }));

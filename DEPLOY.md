@@ -5,14 +5,42 @@ Foundry runs on AWS ECS/Fargate behind an ALB: `apps/web` (Next.js, Fargate),
 host Docker daemon for sandboxes, so it can't run on Fargate), and a Postgres
 RDS instance migrated via a one-off Fargate task (`foundry-db-migrate`).
 
-Deploys are automated by `.github/workflows/deploy.yml` on every push to
-`main`. This doc covers: one-time bootstrap, the normal path, the manual
-fallback, infra changes, and rollback.
+Foundry is self-hosted: you deploy your own instance into your own AWS
+account. This doc covers: deploying your own instance (the primary path),
+the normal push-to-deploy flow once it's set up, the manual fallback, infra
+changes, rollback, and — as secondary content — extending an existing
+shared instance if you're running Foundry as one operator serving multiple
+orgs.
 
-## 1. One-time bootstrap
+## 1. Deploy your own instance
 
-Do these once, in order, before the pipeline is self-sufficient. Steps 1-2
-need a human with real AWS/GitHub access — Claude Code's own permission
+`infra/lib/foundry-stack.ts` takes an `orgName` CDK context value (default
+`"default"`). Passing your own org name deploys an independent copy of the
+whole architecture (VPC, RDS, ECS, ALB) into your AWS account, with every
+resource name scoped to that org — no collisions with any other stack,
+including someone else's instance in a different account or a second
+instance of your own:
+
+```bash
+cd infra
+npx cdk deploy --context orgName=acme-co --require-approval never
+```
+
+This creates stack `FoundryStack-acme-co` with its own RDS instance
+(`foundry-acme-co-db`), S3 bucket (`foundry-project-files-acme-co-<account>`),
+Secrets Manager entries (`foundry/acme-co/db-credentials`,
+`foundry/acme-co/app-secrets`), ECS cluster (`foundry-acme-co-cluster`), and
+ALB (`foundry-acme-co`). It reuses the **same** ECR repos (`foundry-web`,
+`foundry-agent-runtime`, `foundry-db-migrate`) as every other stack — one
+codebase, N infra copies, not a per-org build.
+
+See `infra/README.md` for the mechanism (`orgName` context/prop, defaulting
+behavior) in more detail.
+
+### Setting up your instance's deploy pipeline
+
+Do these once, in order, so GitHub Actions can deploy on your behalf. Steps
+1-2 need a human with real AWS/GitHub access — Claude Code's own permission
 classifier blocks interactive `cdk deploy`.
 
 1. **Create the OIDC provider + IAM roles** (from a real terminal, not
@@ -24,7 +52,10 @@ classifier blocks interactive `cdk deploy`.
    This creates `GithubOidcProvider`, `GithubDeployRole` (used by the
    `deploy-app` job — ECR push, ECS run-task/update-service), and
    `GithubCdkDeployRole` (used by `deploy-infra` — broader, can run `cdk
-   deploy` itself). Not yet run against AWS as of this session.
+   deploy` itself). These are account-level singletons tied to your one
+   GitHub repo/CI pipeline — you create them once, not once per org, even
+   if you later deploy multiple org-scoped stacks into the same account
+   (see "Deploying a second, org-specific stack" below).
 
 2. **Copy the two new CDK outputs into GitHub as secrets.** The deploy
    finishes by printing `GithubDeployRoleArn` and `GithubCdkDeployRoleArn`.
@@ -32,16 +63,16 @@ classifier blocks interactive `cdk deploy`.
    - `AWS_DEPLOY_ROLE_ARN` = `GithubDeployRoleArn` output
    - `AWS_CDK_DEPLOY_ROLE_ARN` = `GithubCdkDeployRoleArn` output
 
-3. **Already done this session** — these repo **variables** (Settings →
-   Secrets and variables → Actions → Variables) are already set, nothing to
-   do here:
+3. **Set these repo variables** (Settings → Secrets and variables → Actions
+   → Variables):
    - `AWS_REGION`, `ECS_CLUSTER_ARN`, `WEB_SERVICE_NAME`,
      `AGENT_SERVICE_NAME`, `MIGRATE_SUBNET_IDS`,
      `MIGRATE_SECURITY_GROUP_ID`, `BASE_URL`, `CLERK_PUBLISHABLE_KEY`
 
-4. **Still needed:**
-   - `CLERK_SECRET_KEY` as a GitHub **secret** — the value already lives in
-     AWS Secrets Manager under `foundry/app-secrets`, just copy it over.
+4. **Set these secrets:**
+   - `CLERK_SECRET_KEY` as a GitHub **secret** — the value lives in AWS
+     Secrets Manager under `foundry/app-secrets` once you've set up Clerk;
+     copy it over.
    - The e2e-specific setup in `e2e/README.md`: seed a Clerk test user and
      set the `E2E_CLERK_USER_EMAIL` / `E2E_CLERK_USER_PASSWORD` secrets.
      Don't duplicate that here — see that file.
@@ -63,12 +94,11 @@ classifier blocks interactive `cdk deploy`.
    `TWILIO_FROM_NUMBER` (a Twilio phone number capable of outbound calls) as
    keys in `foundry/app-secrets`. Requires a real Twilio account and a
    purchased phone number — a paid third-party signup only a human can
-   complete, no infra/code work unblocks it. Platform-level credentials
-   (Foundry's own Twilio account), not per-org — every org's calls place
-   through the same number and bill to the same account, worth revisiting
-   before a second real customer relies on this. Without these set,
-   `place_call` fails with a clear "not configured" error rather than a
-   crash.
+   complete, no infra/code work unblocks it. These are your instance's own
+   credentials — every org on your instance places calls through the same
+   number and bills to the same account, worth revisiting if you run one
+   shared instance for multiple orgs. Without these set, `place_call` fails
+   with a clear "not configured" error rather than a crash.
 
 8. **Optional, for the Telegram channel** (`agent/channels/telegram.ts`):
    create a bot via [@BotFather](https://t.me/BotFather) (`/newbot`), add
@@ -82,13 +112,35 @@ classifier blocks interactive `cdk deploy`.
      -d "url=<BASE_URL>/eve/v1/telegram" \
      -d "secret_token=<TELEGRAM_WEBHOOK_SECRET_TOKEN>"
    ```
-   Platform-level bot (one for every org, same model as Twilio) — an org
+   One bot per instance (same model as Twilio) — an org on your instance
    links its own chat via a short-lived code from `/dashboard/connections`,
    not a per-org bot token.
 
+9. **`exec_host` (direct host execution, `eng-lead`) — the standard setting
+   for a self-hosted deployment**, since a self-hosted instance normally
+   belongs to exactly one org. Set `ALLOW_HOST_EXEC=true` in the
+   agent-runtime container's environment (`infra/lib/foundry-stack.ts`).
+   Without this var set, `exec_host` throws a clear "not enabled" error
+   rather than running — this is a real runtime gate, not just
+   documentation, since eve discovers tool files by directory location
+   regardless of which deployment runs the code. If you're running one
+   shared instance for multiple orgs yourself (see "Extending an existing
+   shared instance" below), leave it unset — this still-approval-gated tool
+   (`riskClass: "reversible-high"`) runs on the container host itself, not
+   an isolated per-org sandbox. Still approval-gated like every other real
+   side-effecting tool either way — enabling host exec doesn't disable
+   guardrails, it only changes where the command runs.
+
+Once bootstrap is done, populate your instance's `app-secrets` Secrets
+Manager entry (same `REPLACE_ME` fields as the default stack, see
+`infra/lib/foundry-stack.ts`), then push images and run the migration using
+the manual sequence in section 3 below, pointed at your stack's own
+cluster/services/subnets (its `CfnOutput`s give you the ARNs) — or just
+`git push origin main` once the pipeline is wired up (section 2).
+
 ## 2. Normal deploy
 
-Once bootstrap is done:
+Once your instance's pipeline is set up:
 
 ```bash
 git push origin main
@@ -183,18 +235,18 @@ database.
 ## 4. Infra changes
 
 `infra/lib/foundry-stack.ts` defines the VPC, cluster, both ECS
-services/task defs, the ALB, RDS, and (as of this session) the GitHub OIDC
-provider and deploy roles.
+services/task defs, the ALB, RDS, and the GitHub OIDC provider and deploy
+roles.
 
 - **Normal path:** just include the `infra/` change in your push to `main`.
   `deploy.yml`'s `deploy-infra` job triggers automatically off the
   `dorny/paths-filter` check on `infra/**` and runs `cdk deploy` for you,
   using the more-privileged `AWS_CDK_DEPLOY_ROLE_ARN`.
-- **Run `cdk deploy` manually** only for the bootstrap step above (the
-  OIDC provider/roles have to exist before the pipeline can assume them —
-  chicken-and-egg), or if you need to inspect a `cdk diff` before pushing,
-  or if `deploy-infra` fails and you're debugging from a terminal with your
-  own AWS credentials.
+- **Run `cdk deploy` manually** only for the initial pipeline bootstrap
+  above (the OIDC provider/roles have to exist before the pipeline can
+  assume them — chicken-and-egg), or if you need to inspect a `cdk diff`
+  before pushing, or if `deploy-infra` fails and you're debugging from a
+  terminal with your own AWS credentials.
 
 ## 5. Rollback
 
@@ -228,3 +280,38 @@ bad:
 - Take an RDS snapshot/backup before attempting any manual schema surgery.
   This repo has no documented restore procedure — treat that as a gap, not
   a solved problem.
+
+## 6. Extending an existing shared instance
+
+Most self-hosters only need section 1. This section is for the less common
+case: you're running one Foundry instance as an operator serving multiple
+orgs yourself, and want to add another org-scoped stack to an AWS account
+that already has a Foundry instance (and its OIDC provider/deploy roles) set
+up.
+
+The `orgName` mechanism from section 1 already isolates the new stack —
+```bash
+cd infra
+npx cdk deploy --context orgName=acme-co --require-approval never
+```
+— so nothing about the deploy command changes. What's different is that you
+skip the pipeline bootstrap (the OIDC provider and
+`foundry-deploy`/`foundry-cdk-deploy` IAM roles are account-level
+singletons your existing instance already created — don't recreate them):
+
+**What this does NOT create:** the GitHub OIDC provider and the
+`foundry-deploy`/`foundry-cdk-deploy` IAM roles. A second org's stack on an
+account that already has an instance is a manual `cdk deploy` you run
+yourself (as above), not a new automated pipeline, so it has no use for its
+own copy of them.
+
+After the stack is up: populate its `foundry/acme-co/app-secrets` Secrets
+Manager entry by hand (same `REPLACE_ME` fields as the default stack, see
+`infra/lib/foundry-stack.ts`), then push images and run the migration
+against it using the manual sequence in section 3 above, pointed at this
+stack's own cluster/services/subnets (its `CfnOutput`s give you the ARNs).
+
+This is manual, per-org provisioning, not self-service — there is no UI or
+automation that creates a new org's stack on signup. See `infra/README.md`
+for the mechanism (`orgName` context/prop, defaulting behavior) in more
+detail.

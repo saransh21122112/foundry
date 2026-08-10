@@ -104,6 +104,28 @@ A tool with **no** `approval:` field skips this whole path — reserved for
 pure reads with no side effect (see `riskClass: "reversible-low"`,
 `gated: false` entries in `KNOWN_TOOLS`).
 
+## Deployment model: single-tenant per deployment
+
+Foundry's primary distribution model is self-hosted, single-tenant: each
+organization deploys its own instance into its own AWS account (see
+[`DEPLOY.md`](./DEPLOY.md) §1, `infra/lib/foundry-stack.ts`'s `orgName` CDK
+context). A given deployment normally serves exactly one org.
+
+The DB schema (`packages/db/src/schema.ts`) is nonetheless `orgId`-scoped
+throughout, as if built for shared multi-tenancy. That's kept intentionally,
+not stale leftover:
+
+- It's harmless in the single-org case — every row just carries the same
+  `orgId`.
+- It still supports an operator who deliberately chooses to run one shared
+  instance for multiple orgs themselves (see `DEPLOY.md` §6, "Extending an
+  existing shared instance").
+
+But it is no longer load-bearing for the product's *default* distribution
+model — don't read the multi-tenant schema as a signal that a shared,
+centrally-operated deployment is the intended way to run Foundry. It isn't;
+self-hosted single-tenant is.
+
 ## Persistent memory & proactive schedules
 
 - **Cross-session memory**: `agent_memories` table

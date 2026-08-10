@@ -10,6 +10,28 @@ Full architecture reasoning lives in the Phase 0 planning session; this file
 tracks what's built and what's left, phase by phase, so a future session
 doesn't have to re-derive the design.
 
+## Direction change (2026-08-11): self-hosted per-org, not central multi-tenant SaaS
+
+**Before:** Foundry was one centrally-operated multi-tenant SaaS — Saransh's
+infrastructure, every signed-up org sharing it as tenants isolated by the
+`organizations` table/Clerk org scoping/`packages/guardrails`.
+
+**Now:** Foundry is a self-hosted product each organization deploys into its
+own AWS account — same distribution model as OpenClaw. An org clones/runs
+the repo and stands up its own stack via CDK rather than signing up for
+Saransh-hosted infrastructure.
+
+**Why:** this resolves the cross-tenant risk that made direct/non-sandboxed
+host execution unsafe to offer on a shared deployment. A genuinely
+single-tenant deployment (one org, one AWS account, one stack) doesn't have
+that risk. This session built the mechanism for it:
+`infra/lib/foundry-stack.ts`'s `orgName` CDK context parameterization
+(independent per-org stacks, synth-verified for no naming collisions), and
+`exec_host.ts`, a direct/non-sandboxed execution tool gated behind
+`ALLOW_HOST_EXEC`, designed specifically for this self-hosted single-tenant
+model. README.md/DEPLOY.md/ARCHITECTURE.md are being rewritten separately to
+reflect this.
+
 ## Running eve dev locally (gotchas found 2026-07-29)
 
 - Needs `AI_GATEWAY_API_KEY` in `apps/agent-runtime/.env` (Vercel AI
@@ -344,3 +366,11 @@ requests to it. `eve build` confirmed the nested subagent compiles.
 4. Legal/compliance scope — audit log retention, data residency, any
    regulatory obligations for departments taking real-world actions
    (`eng-lead` deploying code, `sales-lead` sending email).
+5. **Whether to keep or remove Stripe billing** (2026-08-11, following the
+   self-hosted direction change above): `apps/web/lib/stripe.ts`,
+   `/dashboard/billing`, `apps/web/app/api/webhooks/stripe/route.ts`, and
+   the `STRIPE_*` env vars. Billing stops making obvious product sense once
+   orgs run and pay for their own infrastructure directly — nobody is
+   subscribing to Saransh for infra they themselves operate. This is a
+   business call, not inferred or acted on here — the Stripe code is
+   untouched, this is only a flagged open decision.

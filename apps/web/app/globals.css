@@ -524,6 +524,10 @@ label {
 .transcript-entry-tool .transcript-label {
   color: var(--cool);
 }
+.transcript-entry-reasoning .transcript-label,
+.transcript-entry-step .transcript-label {
+  color: var(--iron-dim);
+}
 .transcript-label {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -535,6 +539,30 @@ label {
 .transcript-body {
   margin: 0;
   white-space: pre-wrap;
+}
+
+/* Verbose-only lines (reasoning, step/turn markers, skipped-tool calls) —
+   terminal aesthetic: smaller mono text, dimmer than the normal chat view. */
+.transcript-entry-verbose {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.transcript-entry-verbose .transcript-body {
+  color: var(--iron);
+}
+
+.verbose-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--iron);
+  margin-bottom: 14px;
+  cursor: pointer;
+  user-select: none;
+}
+.verbose-toggle input {
+  accent-color: var(--ember);
 }
 
 .callout {
@@ -722,5 +750,87 @@ label {
     border-color: #ccc !important;
     background: #fff !important;
     color: #111 !important;
+  }
+}
+
+/* --- Calendar: week grid + status board -------------------------------- */
+
+.calendar-week {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.calendar-day {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  min-height: 140px;
+}
+.calendar-day-header {
+  margin: 0 0 10px;
+}
+.calendar-day-date {
+  color: var(--iron-dim);
+}
+.calendar-day-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.calendar-card {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--ember);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.calendar-card-title {
+  display: block;
+  font-size: 13px;
+  color: var(--paper);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-card-title:hover {
+  color: var(--ember);
+}
+.calendar-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+.calendar-card-time {
+  font-size: 11px;
+  color: var(--iron-dim);
+}
+.calendar-status-select {
+  font-size: 11px;
+  background: var(--surface);
+  color: var(--iron);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 2px 4px;
+}
+.kanban-board {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.kanban-column {
+  margin-bottom: 0;
+}
+
+@media (max-width: 960px) {
+  .calendar-week {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+  .kanban-board {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
 }

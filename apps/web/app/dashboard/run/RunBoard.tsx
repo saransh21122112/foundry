@@ -6,8 +6,12 @@ import Link from "next/link";
 import { startTask, sendFollowUp, listTasks } from "./actions";
 
 interface LogEntry {
-  kind: "you" | "system" | "agent" | "pending" | "tool";
+  kind: "you" | "system" | "agent" | "pending" | "tool" | "reasoning" | "step";
   text: string;
+  /** Only rendered when the Verbose toggle is on — see emitFromEvent. */
+  verboseOnly?: boolean;
+  /** Subagent nesting depth, for indenting verbose output. 0 = top level. */
+  depth?: number;
 }
 
 /**
@@ -80,32 +84,61 @@ function emitFromEvent(
   onPending: (kind: PendingKind) => void,
   onWaiting: (continuationToken: string) => void,
 ): void {
+  const depth = subagentPath.length;
   if (event.type === "message.received") {
     const text = event.data?.message as string | undefined;
     if (text) onEntry({ kind: "you", text });
   } else if (event.type === "subagent.called") {
-    onEntry({ kind: "system", text: `Delegating to ${event.data?.name as string}…` });
+    onEntry({ kind: "system", text: `Delegating to ${event.data?.name as string}…`, depth });
   } else if (event.type === "subagent.event") {
     const childEvent = event.data?.event as EveEvent | undefined;
     const subagentName = event.data?.subagentName as string | undefined;
     if (childEvent) {
       emitFromEvent(childEvent, subagentName ? [...subagentPath, subagentName] : subagentPath, onEntry, onPending, onWaiting);
     }
+  } else if (event.type === "actions.requested") {
+    // Verbose-only: shows a call was requested *before* it executes —
+    // action.result (below) covers the same call once it's actually done,
+    // so this is purely "what's about to happen" detail.
+    const actions = event.data?.actions as readonly { kind?: string; toolName?: string; name?: string }[] | undefined;
+    const label = subagentPath.length > 0 ? `${subagentPath.join(" > ")} requesting` : "Requesting";
+    for (const action of actions ?? []) {
+      if (action.kind === "tool-call" && action.toolName) {
+        onEntry({ kind: "step", text: `${label} ${action.toolName}…`, verboseOnly: true, depth });
+      } else if (action.kind === "subagent-call" && action.name) {
+        onEntry({ kind: "step", text: `${label} subagent ${action.name}…`, verboseOnly: true, depth });
+      } else if (action.kind === "load-skill" && action.name) {
+        onEntry({ kind: "step", text: `${label} skill ${action.name}…`, verboseOnly: true, depth });
+      }
+    }
   } else if (event.type === "action.result") {
     const result = event.data?.result as { kind?: string; toolName?: string; output?: unknown } | undefined;
     const status = event.data?.status as string | undefined;
-    if (result?.kind === "tool-result" && result.toolName && !SKIP_TOOL_NAMES.has(result.toolName)) {
+    if (result?.kind === "tool-result" && result.toolName) {
+      const skipped = SKIP_TOOL_NAMES.has(result.toolName);
       const label = subagentPath.length > 0 ? `${subagentPath.join(" > ")} called` : "Called";
       if (status === "completed") {
-        onEntry({ kind: "tool", text: `${label} ${result.toolName} → ${summarizeToolOutput(result.output)}` });
+        onEntry({ kind: "tool", text: `${label} ${result.toolName} → ${summarizeToolOutput(result.output)}`, verboseOnly: skipped, depth });
       } else if (status === "rejected" || status === "failed") {
         const error = event.data?.error as { message?: string } | undefined;
         onEntry({
           kind: "system",
           text: `${result.toolName} was blocked: ${error?.message ?? (status === "rejected" ? "denied by guardrails" : "failed")}`,
+          depth,
         });
       }
     }
+  } else if (event.type === "reasoning.completed") {
+    // One line per completed reasoning block — not per `reasoning.appended`
+    // delta, which would be several lines of noise per turn for the same
+    // thought as it streams in. `reasoning.completed` already carries the
+    // full block, so the deltas add nothing a verbose reader needs.
+    const text = event.data?.reasoning as string | undefined;
+    if (text) onEntry({ kind: "reasoning", text, verboseOnly: true, depth });
+  } else if (event.type === "step.started" || event.type === "turn.started") {
+    const label = event.type === "turn.started" ? "Turn" : "Step";
+    const index = event.data?.stepIndex as number | undefined;
+    onEntry({ kind: "step", text: `${label} started${index !== undefined ? ` (step ${index + 1})` : ""}`, verboseOnly: true, depth });
   } else if (event.type === "message.completed") {
     const text = event.data?.message as string | undefined;
     if (text) onEntry({ kind: "agent", text });
@@ -280,6 +313,9 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
   // Set when a post-reply replay hits REPLY_STALL_TIMEOUT_MS without the
   // agent runtime resuming — see ReplyStallTimeoutError.
   const [replyStalled, setReplyStalled] = useState(false);
+  // Verbose transcript toggle — see LogEntry.verboseOnly / emitFromEvent.
+  // Default off: today's filtered "chat" view stays the default experience.
+  const [verbose, setVerbose] = useState(false);
   // Seeded from the server render (page.tsx) — no client fetch needed just
   // to show the list on first paint; refreshTasks() below only re-fetches
   // after something actually changes the list (a new task started).
@@ -502,24 +538,40 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
         <div className="panel">
           {log.length === 0 && !running && <p className="panel-empty">Nothing run yet.</p>}
           {log.length > 0 && (
-            <div className="transcript">
-              {log.map((entry, i) => (
-                <div key={i} className={`transcript-entry-${entry.kind}`}>
-                  <span className="transcript-label">
-                    {entry.kind === "you"
-                      ? "You"
-                      : entry.kind === "agent"
-                        ? "Foundry"
-                        : entry.kind === "pending"
-                          ? "Paused"
-                          : entry.kind === "tool"
-                            ? "Action"
-                            : "System"}
-                  </span>
-                  <p className="transcript-body">{entry.text}</p>
-                </div>
-              ))}
-            </div>
+            <>
+              <label className="verbose-toggle mono">
+                <input type="checkbox" checked={verbose} onChange={(e) => setVerbose(e.target.checked)} />
+                Verbose — show reasoning, step/turn markers, and every tool call
+              </label>
+              <div className="transcript">
+                {log
+                  .filter((entry) => verbose || !entry.verboseOnly)
+                  .map((entry, i) => (
+                    <div
+                      key={i}
+                      className={`transcript-entry-${entry.kind}${entry.verboseOnly ? " transcript-entry-verbose" : ""}`}
+                      style={{ marginLeft: (entry.depth ?? 0) * 16 }}
+                    >
+                      <span className="transcript-label">
+                        {entry.kind === "you"
+                          ? "You"
+                          : entry.kind === "agent"
+                            ? "Foundry"
+                            : entry.kind === "pending"
+                              ? "Paused"
+                              : entry.kind === "tool"
+                                ? "Action"
+                                : entry.kind === "reasoning"
+                                  ? "Thinking"
+                                  : entry.kind === "step"
+                                    ? "Step"
+                                    : "System"}
+                      </span>
+                      <p className="transcript-body">{entry.text}</p>
+                    </div>
+                  ))}
+              </div>
+            </>
           )}
           {running && (
             <div style={{ marginTop: log.length > 0 ? 14 : 0 }}>

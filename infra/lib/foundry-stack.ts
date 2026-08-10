@@ -25,9 +25,34 @@ function dbConnectionSecrets(database: rds.DatabaseInstance): Record<string, ecs
   };
 }
 
+export interface FoundryStackProps extends cdk.StackProps {
+  // Which org/customer this deployment is for. Falls back to context (so
+  // `cdk synth --context orgName=x` works even without touching bin/infra.ts)
+  // and finally to "default" — the identity of the original shared stack.
+  // Every physical resource name below only gets an org suffix/segment when
+  // this is NOT "default", so the existing default deployment's resources
+  // keep their exact current names (no accidental replacement).
+  orgName?: string;
+}
+
 export class FoundryStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props?: FoundryStackProps) {
     super(scope, id, props);
+
+    const orgName =
+      props?.orgName ?? (this.node.tryGetContext("orgName") as string | undefined) ?? "default";
+    // Trust-boundary check: orgName ends up in AWS resource names (S3 bucket,
+    // RDS identifier, IAM role, Secrets Manager path) with tight charset
+    // rules — fail fast with a clear error rather than a confusing AWS
+    // validation error mid-deploy.
+    if (!/^[a-z][a-z0-9-]{0,30}$/.test(orgName)) {
+      throw new Error(
+        `orgName "${orgName}" is invalid — must start with a lowercase letter and contain only ` +
+          `lowercase letters, digits, and hyphens (max 31 chars).`,
+      );
+    }
+    const isDefault = orgName === "default";
+    cdk.Tags.of(this).add("foundry:org", orgName);
 
     // --- Networking -------------------------------------------------
     // Single NAT instance (t3.nano, ~$3/mo) instead of a managed NAT Gateway
@@ -55,12 +80,16 @@ export class FoundryStack extends cdk.Stack {
     // Imported, not created: these repos already exist and hold real pushed
     // images from earlier deploy attempts (RETAIN survives a rolled-back
     // stack) — `new ecr.Repository` would collide with them on every deploy.
+    // Intentionally NOT org-namespaced: these are imports (references, not
+    // declared resources), so two stacks importing the same repo name never
+    // collide — and every org's ECS services running the same app image is
+    // the point (one codebase, N infra copies), not a per-org concern.
     const webRepo = ecr.Repository.fromRepositoryName(this, "WebRepo", "foundry-web");
     const agentRepo = ecr.Repository.fromRepositoryName(this, "AgentRuntimeRepo", "foundry-agent-runtime");
 
     // --- Database (RDS Postgres, single-AZ, t3.micro) -----------------
     const dbCredentials = rds.Credentials.fromGeneratedSecret("foundry_app", {
-      secretName: "foundry/db-credentials",
+      secretName: isDefault ? "foundry/db-credentials" : `foundry/${orgName}/db-credentials`,
     });
 
     const dbSecurityGroup = new ec2.SecurityGroup(this, "DbSecurityGroup", {
@@ -78,6 +107,10 @@ export class FoundryStack extends cdk.Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [dbSecurityGroup],
       credentials: dbCredentials,
+      // Unset (CDK/CFN auto-generated) for the default stack, unchanged from
+      // before this change. Explicit + org-suffixed for a second stack so
+      // it's identifiable in the RDS console and can't collide.
+      instanceIdentifier: isDefault ? undefined : `foundry-${orgName}-db`,
       databaseName: "foundry",
       allocatedStorage: 20,
       maxAllocatedStorage: 100,
@@ -94,7 +127,7 @@ export class FoundryStack extends cdk.Stack {
 
     // --- App secrets (values filled in manually post-deploy) ----------
     const appSecrets = new secretsmanager.Secret(this, "AppSecrets", {
-      secretName: "foundry/app-secrets",
+      secretName: isDefault ? "foundry/app-secrets" : `foundry/${orgName}/app-secrets`,
       description: "Clerk, Anthropic, Resend, Stripe credentials — populate manually after deploy.",
       secretObjectValue: {
         CLERK_SECRET_KEY: cdk.SecretValue.unsafePlainText("REPLACE_ME"),
@@ -112,7 +145,14 @@ export class FoundryStack extends cdk.Stack {
 
     // --- S3 bucket for project file storage (replaces Vercel Blob) ------
     const projectFilesBucket = new s3.Bucket(this, "ProjectFilesBucket", {
-      bucketName: `foundry-project-files-${this.account}`,
+      // S3 bucket names are globally unique across ALL AWS accounts, not
+      // just this one — the account id alone (already unique per-account)
+      // isn't enough once a second org's stack can deploy into the SAME
+      // account, so the org segment is required here even more than
+      // elsewhere.
+      bucketName: isDefault
+        ? `foundry-project-files-${this.account}`
+        : `foundry-project-files-${orgName}-${this.account}`,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       versioned: false,
@@ -133,7 +173,11 @@ export class FoundryStack extends cdk.Stack {
     });
 
     // --- ECS cluster ----------------------------------------------------
-    const cluster = new ecs.Cluster(this, "Cluster", { vpc, containerInsights: true });
+    const cluster = new ecs.Cluster(this, "Cluster", {
+      vpc,
+      containerInsights: true,
+      clusterName: isDefault ? undefined : `foundry-${orgName}-cluster`,
+    });
 
     // Fargate capacity is built into the cluster by default; add an EC2
     // capacity provider only for the agent-runtime service, which needs
@@ -170,6 +214,7 @@ export class FoundryStack extends cdk.Stack {
       // streams mid-task ("network error" observed live, 2026-08-06) —
       // multi-agent chains routinely run past a minute.
       idleTimeout: cdk.Duration.seconds(300),
+      loadBalancerName: isDefault ? undefined : `foundry-${orgName}`,
     });
     const listener = alb.addListener("HttpListener", { port: 80, open: true });
     const appUrl = `http://${alb.loadBalancerDnsName}`;
@@ -317,6 +362,17 @@ export class FoundryStack extends cdk.Stack {
     void webTargetGroup;
 
     // --- GitHub Actions CI/CD: OIDC + deploy roles -----------------------
+    // Only created for the default/primary stack. Two reasons this whole
+    // block is skipped for a second org's stack rather than org-namespaced
+    // like everything else above:
+    //   1. An IAM OIDC provider for a given URL is an account-level
+    //      singleton in AWS — a second `new iam.OpenIdConnectProvider` for
+    //      the same "token.actions.githubusercontent.com" URL in this same
+    //      account fails outright, namespacing or not.
+    //   2. There is exactly one GitHub repo/CI pipeline; per-customer
+    //      deploys here are manual `cdk deploy` runs (see DEPLOY.md), not a
+    //      separate automated pipeline per org, so a per-org deploy role
+    //      has nothing to do.
     // No long-lived AWS keys stored in GitHub — a workflow run presents a
     // short-lived OIDC token and assumes one of these roles instead. Two
     // roles, not one: `deployRole` (used on every push) only has the exact
@@ -324,6 +380,9 @@ export class FoundryStack extends cdk.Stack {
     // session used by hand needs; `cdkDeployRole` (used only when infra/**
     // changes) is broader and kept separate so the everyday app-deploy path
     // stays minimally privileged.
+    let deployRoleArn: string | undefined;
+    let cdkDeployRoleArn: string | undefined;
+    if (isDefault) {
     const githubOidcProvider = new iam.OpenIdConnectProvider(this, "GithubOidcProvider", {
       url: "https://token.actions.githubusercontent.com",
       clientIds: ["sts.amazonaws.com"],
@@ -424,13 +483,17 @@ export class FoundryStack extends cdk.Stack {
       }),
     );
 
+    deployRoleArn = deployRole.roleArn;
+    cdkDeployRoleArn = cdkDeployRole.roleArn;
+    } // isDefault
+
     // --- Outputs --------------------------------------------------------
     new cdk.CfnOutput(this, "AlbDnsName", { value: alb.loadBalancerDnsName });
     new cdk.CfnOutput(this, "WebRepoUri", { value: webRepo.repositoryUri });
     new cdk.CfnOutput(this, "AgentRuntimeRepoUri", { value: agentRepo.repositoryUri });
     new cdk.CfnOutput(this, "DbSecretArn", { value: database.secret!.secretArn });
     new cdk.CfnOutput(this, "AppSecretsArn", { value: appSecrets.secretArn });
-    new cdk.CfnOutput(this, "GithubDeployRoleArn", { value: deployRole.roleArn });
-    new cdk.CfnOutput(this, "GithubCdkDeployRoleArn", { value: cdkDeployRole.roleArn });
+    if (deployRoleArn) new cdk.CfnOutput(this, "GithubDeployRoleArn", { value: deployRoleArn });
+    if (cdkDeployRoleArn) new cdk.CfnOutput(this, "GithubCdkDeployRoleArn", { value: cdkDeployRoleArn });
   }
 }
