@@ -200,6 +200,8 @@ export class FoundryStack extends cdk.Stack {
         GITHUB_OAUTH_CLIENT_ID: ecs.Secret.fromSecretsManager(appSecrets, "GITHUB_OAUTH_CLIENT_ID"),
         GITHUB_OAUTH_CLIENT_SECRET: ecs.Secret.fromSecretsManager(appSecrets, "GITHUB_OAUTH_CLIENT_SECRET"),
         GITHUB_TOKEN_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(appSecrets, "GITHUB_TOKEN_ENCRYPTION_KEY"),
+        GOOGLE_OAUTH_CLIENT_ID: ecs.Secret.fromSecretsManager(appSecrets, "GOOGLE_OAUTH_CLIENT_ID"),
+        GOOGLE_OAUTH_CLIENT_SECRET: ecs.Secret.fromSecretsManager(appSecrets, "GOOGLE_OAUTH_CLIENT_SECRET"),
       },
     });
     webContainer.addPortMappings({ containerPort: 3000 });
@@ -254,6 +256,19 @@ export class FoundryStack extends cdk.Stack {
         // only ever decrypts an already-stored token (see
         // agent/lib/github-connection-auth.ts).
         GITHUB_TOKEN_ENCRYPTION_KEY: ecs.Secret.fromSecretsManager(appSecrets, "GITHUB_TOKEN_ENCRYPTION_KEY"),
+        // Unlike GitHub, agent-runtime DOES need the OAuth client id/secret
+        // here — Google access tokens expire in ~1hr, so
+        // google-calendar-connection-auth.ts refreshes them itself (rather
+        // than only ever reading a token apps/web already refreshed), which
+        // needs the client credentials to call Google's token endpoint.
+        GOOGLE_OAUTH_CLIENT_ID: ecs.Secret.fromSecretsManager(appSecrets, "GOOGLE_OAUTH_CLIENT_ID"),
+        GOOGLE_OAUTH_CLIENT_SECRET: ecs.Secret.fromSecretsManager(appSecrets, "GOOGLE_OAUTH_CLIENT_SECRET"),
+        // Platform-level, not per-org — same model as RESEND_API_KEY.
+        // place_call.ts/get_call_result.ts (lib/twilio-call.ts) are the
+        // only readers.
+        TWILIO_ACCOUNT_SID: ecs.Secret.fromSecretsManager(appSecrets, "TWILIO_ACCOUNT_SID"),
+        TWILIO_AUTH_TOKEN: ecs.Secret.fromSecretsManager(appSecrets, "TWILIO_AUTH_TOKEN"),
+        TWILIO_FROM_NUMBER: ecs.Secret.fromSecretsManager(appSecrets, "TWILIO_FROM_NUMBER"),
       },
     });
     agentContainer.addPortMappings({ containerPort: 3000 });
