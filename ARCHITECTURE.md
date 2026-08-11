@@ -114,18 +114,25 @@ context). A given deployment normally serves exactly one org.
 
 The DB schema (`packages/db/src/schema.ts`) is nonetheless `orgId`-scoped
 throughout, as if built for shared multi-tenancy. That's kept intentionally,
-not stale leftover:
+not stale leftover — it still supports an operator who deliberately chooses
+to run the **default** stack (`orgName` unset/`"default"`) as one shared
+instance holding more than one row in its `organizations` table, the
+original architecture this app started as. It's no longer load-bearing for
+the product's *default* distribution model, but it still works.
 
-- It's harmless in the single-org case — every row just carries the same
-  `orgId`.
-- It still supports an operator who deliberately chooses to run one shared
-  instance for multiple orgs themselves (see `DEPLOY.md` §6, "Extending an
-  existing shared instance").
-
-But it is no longer load-bearing for the product's *default* distribution
-model — don't read the multi-tenant schema as a signal that a shared,
-centrally-operated deployment is the intended way to run Foundry. It isn't;
-self-hosted single-tenant is.
+Two things that look similar but aren't, worth not conflating:
+- **`DEPLOY.md` §6, "extending an existing shared instance"** — deploying a
+  *second, independently-scoped* `orgName` stack into an AWS account that
+  already has one. Each stack still gets its own RDS/ECS/ALB — fully
+  isolated from every other stack, same as any other self-hosted instance.
+  Not a multi-tenant risk at all.
+- **Actually running the default stack multi-tenant** (multiple
+  `organizations` rows in *one* stack's database) — the real shared case,
+  where `exec_host.ts`/`clone_repo.ts` (host execution, no sandbox — see
+  their own doc comments) would have host-level reach with no isolation
+  between orgs, only the approval gate protecting it. `FOUNDRY_SHARED_INSTANCE=true`
+  (`agent/lib/shared-instance-guard.ts`) disables both tools specifically
+  for this case — set it if and only if you're intentionally doing this.
 
 ## Persistent memory & proactive schedules
 

@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { makeApprovalPolicy } from "@foundry/guardrails";
 import { dbDeps } from "@foundry/guardrails/deps-db";
+import { assertNotSharedInstance } from "../../../lib/shared-instance-guard";
 
 const execFileAsync = promisify(execFile);
 
@@ -31,6 +32,24 @@ const execFileAsync = promisify(execFile);
  * agent-loop.ts does the identical thing: host-first execution, still
  * gated through a `beforeToolCall`/exec-approval hook (confirmed by
  * reading its actual source this session, not assumed).
+ *
+ * `FOUNDRY_SHARED_INSTANCE` is the one remaining safety net, added after
+ * automated security review correctly flagged that removing the old
+ * ALLOW_HOST_EXEC opt-in left the real shared-tenant case (running the
+ * **default** stack itself with more than one org in its own database —
+ * see ARCHITECTURE.md's "Deployment model" section; NOT DEPLOY.md §6's
+ * "extending an existing shared instance," which is a fully isolated
+ * second stack and not actually a risk) with no code-level protection —
+ * a successful call there would have host-level reach across org
+ * boundaries with only the approval gate stopping it. This flips the
+ * polarity of the old gate: normal single-org deployments (the default,
+ * what this app is built around now) need no flag and get zero friction;
+ * only a deployment explicitly marked as shared opts into the
+ * restriction. Not restored: the old default-off gate, since that
+ * reintroduced exactly the friction removed at explicit, repeated
+ * request — this only bites the one configuration actually documented
+ * as risky. Implementation shared with clone_repo.ts in
+ * lib/shared-instance-guard.ts.
  */
 export default defineTool({
   description:
@@ -49,6 +68,7 @@ export default defineTool({
     dbDeps,
   ),
   async execute({ command, args, cwd }) {
+    assertNotSharedInstance("exec_host");
     try {
       const { stdout, stderr } = await execFileAsync(command, args, {
         cwd,

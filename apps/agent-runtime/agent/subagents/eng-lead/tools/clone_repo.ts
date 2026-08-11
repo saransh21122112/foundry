@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { makeApprovalPolicy } from "@foundry/guardrails";
 import { dbDeps } from "@foundry/guardrails/deps-db";
 import { resolveGithubToken } from "../../../lib/github-connection-auth";
+import { assertNotSharedInstance } from "../../../lib/shared-instance-guard";
 
 const execFileAsync = promisify(execFile);
 
@@ -28,6 +29,11 @@ const execFileAsync = promisify(execFile);
  *
  * Still gated by the exact same approval policy as every other real side
  * effect — an org on draft_only sees this queued, same as before.
+ *
+ * `assertNotSharedInstance` (lib/shared-instance-guard.ts) is the one
+ * remaining safety net for the documented-risky shared-multi-org
+ * secondary deployment option — see exec_host.ts's doc comment for the
+ * full reasoning, identical here.
  */
 export default defineTool({
   description:
@@ -55,6 +61,7 @@ export default defineTool({
     dbDeps,
   ),
   async execute(input, ctx) {
+    assertNotSharedInstance("clone_repo");
     const orgId = ctx.session.auth.current?.attributes?.orgId;
     if (typeof orgId !== "string") {
       throw new Error("No organization resolved on this session.");

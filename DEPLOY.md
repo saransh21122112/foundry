@@ -37,6 +37,18 @@ codebase, N infra copies, not a per-org build.
 See `infra/README.md` for the mechanism (`orgName` context/prop, defaulting
 behavior) in more detail.
 
+**Running the default stack (no `--context orgName`) for more than one
+org** — the original architecture this app started as, still fully
+supported by the `orgId`-scoped schema (see ARCHITECTURE.md's "Deployment
+model" section) but no longer the primary/recommended path: if you
+intentionally do this, set `FOUNDRY_SHARED_INSTANCE=true` in that stack's
+agent-runtime container environment. Without it, `exec_host`/`clone_repo`
+(direct host execution, no sandbox — see their own doc comments) would run
+with host-level reach and no isolation between the orgs sharing that one
+container, protected only by the approval gate. This is unrelated to §6
+below, which is about a *second, fully isolated* stack — that needs no
+flag.
+
 ### Setting up your instance's deploy pipeline
 
 Do these once, in order, so GitHub Actions can deploy on your behalf. Steps
