@@ -30,8 +30,15 @@ ENV NODE_ENV=production
 # real terminal connection failed with "execvp(3) failed: No such file or
 # directory" (confirmed live). A real terminal should behave like a real
 # shell (history, completion) rather than silently downgrading to sh.
-# docker CLI, for the same reason as before — talks to the host daemon through the mounted socket, doesn't run one itself
-RUN apk add --no-cache docker-cli bash
+# docker CLI, for the same reason as before — talks to the host daemon through the mounted socket, doesn't run one itself.
+# git/curl: baseline for real work in a real terminal (cloning, hitting an API by hand).
+RUN apk add --no-cache docker-cli bash git curl
+
+# Claude Code CLI, for running Claude directly inside this real terminal —
+# authenticates via ANTHROPIC_API_KEY, already present in this
+# container's env (see foundry-stack.ts's appSecrets). No separate login
+# step needed.
+RUN npm install -g @anthropic-ai/claude-code
 
 # This is an npm workspace monorepo — `npm install` at the repo root
 # hoists any dependency that doesn't conflict across workspaces up to
