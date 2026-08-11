@@ -140,6 +140,11 @@ export class FoundryStack extends cdk.Stack {
         // possible after this stack exists) comes before this has a real
         // value — placeholder until that's done.
         STRIPE_WEBHOOK_SECRET: cdk.SecretValue.unsafePlainText("REPLACE_ME"),
+        // Shared bearer token between apps/web and runtime-core/server.ts
+        // (the non-eve, PTY-backed live terminal) — see DEPLOY.md. Same
+        // "populate manually post-deploy" pattern as everything else here;
+        // generate with `openssl rand -hex 32`.
+        RUNTIME_CORE_INTERNAL_TOKEN: cdk.SecretValue.unsafePlainText("REPLACE_ME"),
       },
     });
 
@@ -251,6 +256,11 @@ export class FoundryStack extends cdk.Stack {
         // still sourced from appSecrets so there's one place to update it —
         // the actual bot token lives only in agent-runtime's secrets below.
         TELEGRAM_BOT_USERNAME: ecs.Secret.fromSecretsManager(appSecrets, "TELEGRAM_BOT_USERNAME"),
+        // Server-side only — used to mint short-lived, session-scoped
+        // terminal tokens (POST /runtime-core/v1/terminal-token) after
+        // apps/web's own Clerk auth + run_sessions ownership check. Never
+        // sent to the browser directly; see runtime-core/server.ts.
+        RUNTIME_CORE_INTERNAL_TOKEN: ecs.Secret.fromSecretsManager(appSecrets, "RUNTIME_CORE_INTERNAL_TOKEN"),
       },
     });
     webContainer.addPortMappings({ containerPort: 3000 });
@@ -293,7 +303,14 @@ export class FoundryStack extends cdk.Stack {
       memoryLimitMiB: 1536,
       cpu: 512,
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: "agent-runtime", logGroup }),
-      environment: { PORT: "3000", APP_URL: appUrl, PROJECT_FILES_BUCKET: projectFilesBucket.bucketName },
+      environment: {
+        PORT: "3000",
+        APP_URL: appUrl,
+        PROJECT_FILES_BUCKET: projectFilesBucket.bucketName,
+        // runtime-core/server.ts's WS terminal route origin allowlist —
+        // only this app's own real origin may open a terminal socket.
+        APP_ORIGINS: appUrl,
+      },
       secrets: {
         ...dbConnectionSecrets(database),
         CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(appSecrets, "CLERK_SECRET_KEY"),
@@ -324,9 +341,12 @@ export class FoundryStack extends cdk.Stack {
         TELEGRAM_BOT_TOKEN: ecs.Secret.fromSecretsManager(appSecrets, "TELEGRAM_BOT_TOKEN"),
         TELEGRAM_WEBHOOK_SECRET_TOKEN: ecs.Secret.fromSecretsManager(appSecrets, "TELEGRAM_WEBHOOK_SECRET_TOKEN"),
         TELEGRAM_BOT_USERNAME: ecs.Secret.fromSecretsManager(appSecrets, "TELEGRAM_BOT_USERNAME"),
+        // runtime-core/server.ts's own auth — see start.mjs, which runs it
+        // alongside eve as a second process in this same container/task.
+        RUNTIME_CORE_INTERNAL_TOKEN: ecs.Secret.fromSecretsManager(appSecrets, "RUNTIME_CORE_INTERNAL_TOKEN"),
       },
     });
-    agentContainer.addPortMappings({ containerPort: 3000 });
+    agentContainer.addPortMappings({ containerPort: 3000 }, { containerPort: 3313 });
     agentContainer.addMountPoints(
       { containerPath: "/var/run/docker.sock", sourceVolume: "docker-socket", readOnly: false },
       { containerPath: "/repo/apps/agent-runtime/.eve/.workflow-data", sourceVolume: "workflow-state", readOnly: false },
@@ -354,10 +374,27 @@ export class FoundryStack extends cdk.Stack {
     listener.addTargets("AgentRuntimeTargets", {
       port: 3000,
       protocol: elbv2.ApplicationProtocol.HTTP,
-      targets: [agentService],
+      // Explicit containerPort, not just `[agentService]` — the container
+      // now has two port mappings (3000 for eve, 3313 for runtime-core),
+      // so which one this target group means needs to be unambiguous.
+      targets: [agentService.loadBalancerTarget({ containerName: "agent-runtime", containerPort: 3000 })],
       priority: 10,
       conditions: [elbv2.ListenerCondition.pathPatterns(["/eve/*", "/.well-known/workflow/*"])],
       healthCheck: { path: "/eve/v1/health", healthyHttpCodes: "200-399" },
+    });
+
+    // runtime-core/server.ts's own port (3313) — separate target group
+    // since it's a different containerPort than eve's 3000, same
+    // agentService/task either way. The ALB proxies WebSocket upgrades
+    // transparently over this same HTTP listener, no separate listener
+    // needed (confirmed supported for ALB, unlike classic ELB).
+    listener.addTargets("RuntimeCoreTargets", {
+      port: 3313,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      targets: [agentService.loadBalancerTarget({ containerName: "agent-runtime", containerPort: 3313 })],
+      priority: 11,
+      conditions: [elbv2.ListenerCondition.pathPatterns(["/runtime-core/*"])],
+      healthCheck: { path: "/runtime-core/v1/health", healthyHttpCodes: "200-399" },
     });
     void webTargetGroup;
 
