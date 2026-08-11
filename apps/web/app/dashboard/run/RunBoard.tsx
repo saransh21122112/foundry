@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { startTask, sendFollowUp, listTasks } from "./actions";
+import { LiveTerminal } from "./LiveTerminal";
 
 interface LogEntry {
   kind: "you" | "system" | "agent" | "pending" | "tool" | "reasoning" | "step";
@@ -578,6 +579,15 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
               <span className="pulse-dot" /> <span className="mono" style={{ fontSize: 12, color: "var(--iron)" }}>working…</span>
             </div>
           )}
+        </div>
+
+        <div style={{ marginTop: 24 }}>
+          <p className="eyebrow">Real, live shell — not a replay</p>
+          <p className="lede" style={{ marginTop: 4 }}>
+            A genuine terminal on this deployment&apos;s own host, real-time. Separate from the task above: this is
+            something YOU type into directly, not a log of what an agent did.
+          </p>
+          <LiveTerminal />
         </div>
 
         {continuationToken && !running && (

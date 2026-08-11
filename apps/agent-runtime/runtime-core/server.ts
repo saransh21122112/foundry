@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHmac, timingSafeEqual } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { gateway } from "ai";
+import { WebSocketServer, type WebSocket } from "ws";
+import * as pty from "node-pty";
 import { runAgentLoop, type AgentLoopEvent } from "@foundry/agent-runtime-core";
 import { opsManagerTools } from "./ops-manager-tools.js";
 import { makeGuardrailsBeforeToolCall } from "./guardrails-hook.js";
@@ -27,6 +29,33 @@ if (!INTERNAL_TOKEN) {
 function isAuthorized(req: import("node:http").IncomingMessage): boolean {
   const header = req.headers.authorization;
   return header === `Bearer ${INTERNAL_TOKEN}`;
+}
+
+// Short-lived terminal tokens: the browser's native WebSocket API can't
+// send an Authorization header, and the long-lived INTERNAL_TOKEN must
+// never reach client-side JS (it'd let any browser holding it open a
+// terminal on ANY session, not just ones the org owns). apps/web (which
+// already checked Clerk auth + run_sessions org ownership, same as the
+// existing agent-stream proxy) mints one of these server-to-server via
+// POST /runtime-core/v1/terminal-token, then hands only this narrow,
+// expiring, session-scoped token to the browser. HMAC over the
+// INTERNAL_TOKEN, not a new secret — one fewer thing to provision/rotate,
+// and possessing it already implies the same trust level.
+const TERMINAL_TOKEN_TTL_MS = 5 * 60_000;
+
+function signTerminalToken(sessionId: string, expiresAt: number): string {
+  const mac = createHmac("sha256", INTERNAL_TOKEN!).update(`${sessionId}.${expiresAt}`).digest("hex");
+  return `${expiresAt}.${mac}`;
+}
+
+function verifyTerminalToken(sessionId: string, token: string): boolean {
+  const [expiresAtStr, mac] = token.split(".");
+  const expiresAt = Number(expiresAtStr);
+  if (!expiresAtStr || !mac || Number.isNaN(expiresAt) || Date.now() > expiresAt) return false;
+  const expected = createHmac("sha256", INTERNAL_TOKEN!).update(`${sessionId}.${expiresAt}`).digest("hex");
+  const a = Buffer.from(mac);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 // Also flagged: unbounded request bodies and an unbounded, never-evicted
@@ -72,6 +101,61 @@ function evictStaleSessions(): void {
 }
 setInterval(evictStaleSessions, 5 * 60_000).unref();
 
+/**
+ * Real live terminal — a genuine PTY (node-pty), not a command-request/
+ * response loop. This is what a live PTY needs that eve doesn't support:
+ * a way to attach a raw bidirectional stream to a long-lived process from
+ * outside any single tool execution. Scoped honestly: this is a human-
+ * typed shell into the session's own host process (same "operating your
+ * own environment" trust boundary as exec_host.ts — real arrow-key
+ * history, ANSI escapes, full-screen programs all work, since it's a
+ * real pty, not a fake one).
+ *
+ * NOT wired: ops-manager's own tools (get_daily_ops_digest, place_call,
+ * etc.) don't run shell commands at all — there's no exec-style tool on
+ * this department to merge into the shared terminal stream. Agent tool
+ * calls still only appear via the existing NDJSON event stream
+ * (GET .../stream), not this PTY. Named in the plan as an acceptable
+ * fallback rather than forcing something that doesn't apply here.
+ *
+ * One PTY per session, spawned lazily on first WS connection, killed
+ * when the WS closes — no reconnect-to-a-still-running-shell in this
+ * pass (a real limitation, not an oversight: keeping orphaned shells
+ * alive indefinitely after a client disconnects is its own resource-
+ * exhaustion problem, deliberately not taken on here).
+ */
+const terminals = new Map<string, pty.IPty>();
+
+function spawnTerminal(sessionId: string): pty.IPty {
+  const existing = terminals.get(sessionId);
+  if (existing) return existing;
+  const shell = process.env.SHELL ?? "bash";
+  // Explicit allowlist, not `process.env` wholesale — this container's env
+  // holds every secret the app has (CLERK_SECRET_KEY, ANTHROPIC_API_KEY,
+  // DATABASE_URL, RUNTIME_CORE_INTERNAL_TOKEN, TWILIO/GITHUB/GOOGLE
+  // creds…), and anyone who can open this terminal could otherwise just
+  // `echo $ANTHROPIC_API_KEY` to read them straight out. Flagged by
+  // automated security review; fixed here rather than dismissed — real
+  // exposure, not a theoretical one. PATH/HOME/TERM/LANG is enough for a
+  // normal interactive shell.
+  const safeEnv: Record<string, string> = {
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    HOME: process.env.HOME ?? "/tmp",
+    TERM: "xterm-color",
+    LANG: process.env.LANG ?? "C.UTF-8",
+  };
+  const term = pty.spawn(shell, [], {
+    name: "xterm-color",
+    cols: 80,
+    rows: 24,
+    cwd: process.env.HOME,
+    env: safeEnv,
+  });
+  terminals.set(sessionId, term);
+  term.onExit(() => terminals.delete(sessionId));
+  return term;
+}
+
 async function runSession(sessionId: string, orgId: string, message: string): Promise<void> {
   const session = sessions.get(sessionId);
   if (!session) return;
@@ -111,6 +195,15 @@ async function runSession(sessionId: string, orgId: string, message: string): Pr
 
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
+
+  // Unauthenticated on purpose — the ALB target group health check has no
+  // way to send the bearer token, same reason eve's own health route
+  // (/eve/v1/health) isn't gated either.
+  if (req.method === "GET" && url.pathname === "/runtime-core/v1/health") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
 
   if (!isAuthorized(req)) {
     res.writeHead(401, { "content-type": "application/json" });
@@ -160,6 +253,31 @@ const server = createServer((req, res) => {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/runtime-core/v1/terminal-token") {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      let parsed: { sessionId?: unknown };
+      try {
+        parsed = JSON.parse(body || "{}");
+      } catch {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid JSON body" }));
+        return;
+      }
+      if (typeof parsed.sessionId !== "string" || !parsed.sessionId) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "sessionId is required" }));
+        return;
+      }
+      const expiresAt = Date.now() + TERMINAL_TOKEN_TTL_MS;
+      const token = signTerminalToken(parsed.sessionId, expiresAt);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ token, expiresAt }));
+    });
+    return;
+  }
+
   const streamMatch = url.pathname.match(/^\/runtime-core\/v1\/session\/([^/]+)\/stream$/);
   if (req.method === "GET" && streamMatch) {
     const sessionId = decodeURIComponent(streamMatch[1]);
@@ -193,6 +311,80 @@ const server = createServer((req, res) => {
   res.writeHead(404, { "content-type": "application/json" });
   res.end(JSON.stringify({ error: "not found" }));
 });
+
+// WS upgrade requests never carry a normal Authorization header from a
+// browser's native WebSocket API — the token travels as a query param
+// instead, checked before the upgrade completes (same 401-equivalent
+// semantics as the HTTP routes: refuse the socket outright, don't accept
+// then error).
+//
+// APP_ORIGINS: an explicit allowlist, checked against the upgrade
+// request's Origin header before anything else — without it, any page
+// anywhere that got hold of a valid (even short-lived) token could open
+// this socket cross-site. Flagged by automated security review; fixed
+// here. Comma-separated, e.g. "https://app.example.com". Empty/unset
+// means "same-origin only isn't enforceable" — treated as a misconfig,
+// not silently open: the check below fails closed if this isn't set.
+const ALLOWED_ORIGINS = new Set((process.env.APP_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean));
+
+const wss = new WebSocketServer({ noServer: true });
+const terminalRouteMatch = /^\/runtime-core\/v1\/session\/([^/]+)\/terminal$/;
+
+server.on("upgrade", (req, socket, head) => {
+  const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
+  const match = url.pathname.match(terminalRouteMatch);
+  const token = url.searchParams.get("token");
+  const sessionId = match ? decodeURIComponent(match[1]) : "";
+  const origin = req.headers.origin ?? "";
+
+  // Only the short-lived, session-scoped signed token is accepted here —
+  // NOT the long-lived static INTERNAL_TOKEN. That token also travels in
+  // this URL's query string (logs, proxies, browser history all see it),
+  // so accepting it here would mean a single leaked query-string value
+  // grants everything INTERNAL_TOKEN grants, not just one terminal.
+  // Server-to-server callers mint a scoped token via the HTTP route
+  // instead (which does still use INTERNAL_TOKEN, over an Authorization
+  // header, never a URL). Flagged by automated security review; fixed
+  // here rather than dismissed.
+  const authorized = !!match && !!token && verifyTerminalToken(sessionId, token) && ALLOWED_ORIGINS.has(origin);
+  if (!authorized) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    attachTerminal(ws, sessionId);
+  });
+});
+
+function attachTerminal(ws: WebSocket, sessionId: string): void {
+  const term = spawnTerminal(sessionId);
+
+  const onData = term.onData((data) => {
+    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "data", data }));
+  });
+
+  ws.on("message", (raw) => {
+    let msg: { type?: string; data?: string; cols?: number; rows?: number };
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
+    if (msg.type === "input" && typeof msg.data === "string") {
+      term.write(msg.data);
+    } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
+      term.resize(msg.cols, msg.rows);
+    }
+  });
+
+  ws.on("close", () => {
+    onData.dispose();
+    term.kill();
+    terminals.delete(sessionId);
+  });
+}
 
 server.listen(PORT, () => {
   console.log(`[runtime-core] listening on :${PORT}`);

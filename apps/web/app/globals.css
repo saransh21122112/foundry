@@ -125,6 +125,7 @@ code,
   letter-spacing: 0.04em;
   padding: 8px 10px;
   border-radius: var(--radius);
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 .rail-nav small {
   display: block;
@@ -227,6 +228,12 @@ code,
   border-radius: var(--radius);
   padding: 20px 24px;
   margin-bottom: 20px;
+  /* Subtle depth instead of pure flat-on-flat — a hairline top highlight
+     (reads as a bevel catching light) plus a soft drop shadow so panels
+     lift slightly off the page background. Cheap, no layout impact. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
 .panel-empty {
@@ -278,10 +285,14 @@ tr.row-failed:hover {
   border-radius: var(--radius);
   padding: 7px 14px;
   cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
 }
 .btn:hover {
   border-color: var(--iron);
   background: var(--surface-2);
+}
+.btn:active {
+  transform: translateY(1px);
 }
 .btn:focus-visible {
   outline: 2px solid var(--ember);
@@ -322,6 +333,24 @@ select {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 7px 10px;
+  transition: border-color 0.15s ease;
+}
+input[type="text"]:hover,
+input[type="email"]:hover,
+input[type="number"]:hover,
+select:hover {
+  border-color: var(--iron);
+}
+select {
+  /* Native select chevrons render in the OS's own light-mode style on most
+     platforms — a jarring mismatch against this dark theme. Swap it for a
+     flat SVG chevron in --iron so it reads as part of the same system. */
+  appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%238b877e' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  cursor: pointer;
 }
 textarea {
   width: 100%;
@@ -334,12 +363,28 @@ textarea {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 10px 12px;
+  transition: border-color 0.15s ease;
+}
+textarea:hover {
+  border-color: var(--iron);
 }
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--ember);
   outline-offset: 1px;
+}
+
+/* Native checkbox/radio controls render in the OS accent color (usually
+   blue) by default — accent-color is the one-line fix that lets them
+   follow the theme instead of clashing with it on every settings page
+   (Departments' autonomy radios, Tools' allowlist checkboxes, etc.). */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--ember);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
 }
 
 label {
@@ -482,6 +527,7 @@ label {
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 .hero-nav a:hover {
   background: var(--surface-2);
@@ -627,6 +673,7 @@ label {
   padding: 9px 12px;
   cursor: pointer;
   text-align: left;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 .task-list-item:hover {
   background: var(--surface-2);
@@ -785,6 +832,7 @@ label {
   border-left: 2px solid var(--ember);
   border-radius: var(--radius);
   padding: 8px 10px;
+  transition: border-color 0.15s ease;
 }
 .calendar-card-title {
   display: block;
@@ -794,6 +842,7 @@ label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color 0.15s ease;
 }
 .calendar-card-title:hover {
   color: var(--ember);
