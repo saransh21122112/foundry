@@ -28,6 +28,22 @@ ENV NODE_ENV=production
 # docker CLI only — talks to the host daemon through the mounted socket, doesn't run one itself
 RUN apk add --no-cache docker-cli
 
+# This is an npm workspace monorepo — `npm install` at the repo root
+# hoists any dependency that doesn't conflict across workspaces up to
+# /repo/node_modules instead of leaving it under the per-app node_modules.
+# tsx, node-pty, and ws (all needed by runtime-core/server.ts and
+# start.mjs) all landed there, not in apps/agent-runtime/node_modules —
+# confirmed live (2026-08-11): the container crashed on startup with
+# `Cannot find package 'tsx'` because only the per-app node_modules was
+# ever copied into the runner stage. Copy the root one too so Node's
+# normal module-resolution walk-up actually finds them.
+COPY --from=builder /repo/node_modules ./node_modules
+# Workspace packages (@foundry/db, @foundry/guardrails, @foundry/
+# shared-types, @foundry/agent-runtime-core) are symlinked from
+# node_modules/@foundry/* to ../../packages/* — real files need to exist
+# at that target for runtime-core/server.ts's raw-TS imports to resolve,
+# unlike eve's own .output bundle which inlines everything at build time.
+COPY --from=builder /repo/packages ./packages
 COPY --from=builder /repo/apps/agent-runtime/.output ./apps/agent-runtime/.output
 COPY --from=builder /repo/apps/agent-runtime/node_modules ./apps/agent-runtime/node_modules
 COPY --from=builder /repo/apps/agent-runtime/package.json ./apps/agent-runtime/package.json
@@ -40,8 +56,11 @@ COPY --from=builder /repo/apps/agent-runtime/runtime-core ./apps/agent-runtime/r
 COPY --from=builder /repo/apps/agent-runtime/agent ./apps/agent-runtime/agent
 # node-pty's prebuilt/compiled helper binary sometimes loses its execute
 # bit across the layer copy (the same issue hit locally, root-caused to
-# non-executable spawn-helper files) — cheap, idempotent insurance.
-RUN find /repo/apps/agent-runtime/node_modules/node-pty -name "spawn-helper" -exec chmod +x {} \; 2>/dev/null || true
+# non-executable spawn-helper files) — cheap, idempotent insurance. Checks
+# both possible locations since hoisting isn't guaranteed to stay put
+# across dependency changes.
+RUN find /repo/node_modules/node-pty /repo/apps/agent-runtime/node_modules/node-pty \
+      -name "spawn-helper" -exec chmod +x {} \; 2>/dev/null || true
 
 WORKDIR /repo/apps/agent-runtime
 EXPOSE 3000
