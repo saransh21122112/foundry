@@ -116,20 +116,23 @@ classifier blocks interactive `cdk deploy`.
    links its own chat via a short-lived code from `/dashboard/connections`,
    not a per-org bot token.
 
-9. **`exec_host` (direct host execution, `eng-lead`) — the standard setting
-   for a self-hosted deployment**, since a self-hosted instance normally
-   belongs to exactly one org. Set `ALLOW_HOST_EXEC=true` in the
-   agent-runtime container's environment (`infra/lib/foundry-stack.ts`).
-   Without this var set, `exec_host` throws a clear "not enabled" error
-   rather than running — this is a real runtime gate, not just
-   documentation, since eve discovers tool files by directory location
-   regardless of which deployment runs the code. If you're running one
-   shared instance for multiple orgs yourself (see "Extending an existing
-   shared instance" below), leave it unset — this still-approval-gated tool
-   (`riskClass: "reversible-high"`) runs on the container host itself, not
-   an isolated per-org sandbox. Still approval-gated like every other real
-   side-effecting tool either way — enabling host exec doesn't disable
-   guardrails, it only changes where the command runs.
+9. **`exec_host`/`clone_repo` (direct host execution, `eng-lead`) — always
+   on, no separate flag.** This app has no sandboxed execution anymore —
+   both tools run directly on the agent-runtime container itself,
+   matching OpenClaw's own host-first default rather than an isolated
+   per-session sandbox. Still approval-gated exactly like every other real
+   side-effecting tool (`riskClass: "reversible-high"`, goes through
+   `enforce()`) — removing the sandbox didn't remove guardrails, it only
+   changed where the command runs.
+   **If you're running one shared instance for multiple orgs** (see
+   "Extending an existing shared instance" below) rather than the normal
+   one-org-per-deployment model: know that these two tools now run
+   directly on that shared container with no per-org isolation between
+   them — the approval gate still applies, but a successful call from one
+   org's session has host-level reach on infrastructure other orgs' data
+   also lives on. This is a real, deliberate tradeoff for the standalone
+   deployment model this app is built around now, not an oversight — it's
+   just not a safe combination with the shared-instance secondary option.
 
 Once bootstrap is done, populate your instance's `app-secrets` Secrets
 Manager entry (same `REPLACE_ME` fields as the default stack, see

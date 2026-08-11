@@ -17,8 +17,9 @@ disagrees with the actual code, trust the code and fix this file.
         ┌───────────────────┐  ┌──────────────────────────┐
         │  apps/web          │  │  apps/agent-runtime       │
         │  Next.js, Fargate  │─▶│  eve runtime, EC2-backed  │
-        │  dashboard + authz │  │  ECS (needs the Docker    │
-        │  + Stripe billing  │  │  socket for sandboxes)    │
+        │  dashboard + authz │  │  ECS (Docker socket mount │
+        │  + Stripe billing  │  │  is legacy — no tool uses │
+        │                    │  │  eve's sandbox anymore)   │
         └─────────┬──────────┘  └─────────────┬─────────────┘
                   │                            │
                   └────────────┬───────────────┘
