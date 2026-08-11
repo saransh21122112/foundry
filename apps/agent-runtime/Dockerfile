@@ -25,8 +25,13 @@ RUN npx turbo run build --filter=@foundry/agent-runtime
 FROM node:24-alpine AS runner
 WORKDIR /repo
 ENV NODE_ENV=production
-# docker CLI only — talks to the host daemon through the mounted socket, doesn't run one itself
-RUN apk add --no-cache docker-cli
+# bash: runtime-core/server.ts's live terminal spawns $SHELL, defaulting
+# to "bash" — alpine's base image only ships ash/sh, no bash, so every
+# real terminal connection failed with "execvp(3) failed: No such file or
+# directory" (confirmed live). A real terminal should behave like a real
+# shell (history, completion) rather than silently downgrading to sh.
+# docker CLI, for the same reason as before — talks to the host daemon through the mounted socket, doesn't run one itself
+RUN apk add --no-cache docker-cli bash
 
 # This is an npm workspace monorepo — `npm install` at the repo root
 # hoists any dependency that doesn't conflict across workspaces up to
