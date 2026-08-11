@@ -276,6 +276,24 @@ export class FoundryStack extends cdk.Stack {
           // without requesting a limit increase from AWS.
           readTimeout: cdk.Duration.seconds(60),
           keepaliveTimeout: cdk.Duration.seconds(60),
+          // The standard `X-Forwarded-Proto` header is USELESS for
+          // detecting "was the original viewer connection HTTPS" here —
+          // CloudFront sets it correctly on the CloudFront->ALB hop, but
+          // the ALB then overwrites it with its OWN listener's protocol
+          // (this ALB only has an HTTP:80 listener, so it always ends up
+          // "http", no matter what CloudFront originally sent). Confirmed
+          // live: this made Clerk's own server-side middleware believe
+          // every request was plain HTTP, so it built its handshake
+          // redirect_url as http://..., which can't carry a Secure
+          // cookie back — the exact same SameSite=None-gets-dropped
+          // failure CloudFront was added to fix, just one layer deeper.
+          // A custom header survives the ALB hop untouched (the ALB only
+          // rewrites its own well-known X-Forwarded-* headers), and is
+          // safe as a static "true" here because REDIRECT_TO_HTTPS above
+          // means CloudFront itself never forwards a request that didn't
+          // arrive over HTTPS — see middleware.ts for where this gets
+          // read and promoted.
+          customHeaders: { "x-foundry-forwarded-proto": "https" },
         }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
