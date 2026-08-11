@@ -144,6 +144,16 @@ function spawnTerminal(sessionId: string): pty.IPty {
     TERM: "xterm-color",
     LANG: process.env.LANG ?? "C.UTF-8",
   };
+  // Deliberate, narrow exception to the allowlist above: the Claude Code
+  // CLI installed in this image (see Dockerfile) needs this to
+  // authenticate, and running `claude` inside the real terminal was
+  // explicitly requested. Same "operating your own environment" trust
+  // boundary as exec_host.ts already accepts, not a new one — this
+  // terminal is already gated to org:admin only (see
+  // /api/terminal-token). Every OTHER secret (Clerk, Stripe, DB creds,
+  // etc.) stays excluded; this is the one exception, not a reopening of
+  // the original leak.
+  if (process.env.ANTHROPIC_API_KEY) safeEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   const term = pty.spawn(shell, [], {
     name: "xterm-color",
     cols: 80,
