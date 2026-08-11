@@ -4,6 +4,8 @@ import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
+import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as efs from "aws-cdk-lib/aws-efs";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
@@ -129,6 +131,19 @@ export class FoundryStack extends cdk.Stack {
     const appSecrets = new secretsmanager.Secret(this, "AppSecrets", {
       secretName: isDefault ? "foundry/app-secrets" : `foundry/${orgName}/app-secrets`,
       description: "Clerk, Anthropic, Resend, Stripe credentials — populate manually after deploy.",
+      // Do NOT add new keys to this object once the stack has been deployed
+      // once and its real values populated manually. CloudFormation tracks
+      // its own "last SecretString I set" record, completely disconnected
+      // from whatever's actually in Secrets Manager now — changing this
+      // object's shape (even just adding a key) makes CloudFormation see
+      // the property as changed and push this literal placeholder JSON
+      // back into Secrets Manager on the next deploy, silently wiping out
+      // every real value populated since. Confirmed live (2026-08-11): the
+      // deployed template's SecretString was still 100% "REPLACE_ME" even
+      // after real values had been set via `put-secret-value` out of band.
+      // New secrets belong in their OWN `secretsmanager.Secret` construct
+      // (see RuntimeCoreSecret below) — safe to seed with a placeholder
+      // only because it's a brand-new resource with no real value to lose.
       secretObjectValue: {
         CLERK_SECRET_KEY: cdk.SecretValue.unsafePlainText("REPLACE_ME"),
         CLERK_JWKS_URL: cdk.SecretValue.unsafePlainText("REPLACE_ME"),
@@ -140,10 +155,18 @@ export class FoundryStack extends cdk.Stack {
         // possible after this stack exists) comes before this has a real
         // value — placeholder until that's done.
         STRIPE_WEBHOOK_SECRET: cdk.SecretValue.unsafePlainText("REPLACE_ME"),
-        // Shared bearer token between apps/web and runtime-core/server.ts
-        // (the non-eve, PTY-backed live terminal) — see DEPLOY.md. Same
-        // "populate manually post-deploy" pattern as everything else here;
-        // generate with `openssl rand -hex 32`.
+      },
+    });
+
+    // Own secret, not a key inside AppSecrets — see the comment on
+    // AppSecrets above for why. Shared bearer token between apps/web and
+    // runtime-core/server.ts (the non-eve, PTY-backed live terminal); see
+    // DEPLOY.md. Populate manually after deploy, same pattern as
+    // AppSecrets — generate with `openssl rand -hex 32`.
+    const runtimeCoreSecret = new secretsmanager.Secret(this, "RuntimeCoreSecret", {
+      secretName: isDefault ? "foundry/runtime-core-secret" : `foundry/${orgName}/runtime-core-secret`,
+      description: "Shared bearer token for the live terminal's runtime-core server — populate manually after deploy.",
+      secretObjectValue: {
         RUNTIME_CORE_INTERNAL_TOKEN: cdk.SecretValue.unsafePlainText("REPLACE_ME"),
       },
     });
@@ -222,7 +245,56 @@ export class FoundryStack extends cdk.Stack {
       loadBalancerName: isDefault ? undefined : `foundry-${orgName}`,
     });
     const listener = alb.addListener("HttpListener", { port: 80, open: true });
+    // Internal, plain-HTTP ALB URL — server-to-server calls between the two
+    // containers stay on this directly (not routed through CloudFront
+    // below), so they keep the ALB's own 300s idle timeout instead of
+    // CloudFront's much lower origin-read ceiling. Never given to a browser.
     const appUrl = `http://${alb.loadBalancerDnsName}`;
+
+    // --- CloudFront: HTTPS in front of the ALB, no domain required --------
+    // Clerk's dev-instance handshake sets its cookies `SameSite=None`, which
+    // every modern browser silently drops unless the page is also served
+    // over HTTPS — confirmed live as the actual cause of E2E's sign-in never
+    // completing (an infinite `dev-browser-missing` redirect loop, each one
+    // minting a fresh, never-persisted cookie). The ALB has no ACM
+    // certificate (would need a domain we don't have to prove ownership
+    // for), so this puts a CloudFront distribution in front of it instead —
+    // CloudFront's own `*.cloudfront.net` domain gets a valid public
+    // certificate automatically, no domain purchase or DNS validation
+    // needed. The ALB origin itself stays plain HTTP; only the
+    // browser-to-CloudFront leg is HTTPS, which is the only leg Clerk's
+    // handshake actually cares about.
+    const distribution = new cloudfront.Distribution(this, "Cdn", {
+      defaultBehavior: {
+        origin: new origins.HttpOrigin(alb.loadBalancerDnsName, {
+          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+          // 60s is the maximum origin response timeout CloudFront allows
+          // without an AWS support quota increase — real ceiling, lower
+          // than the ALB's own 300s. A single multi-minute silent gap in an
+          // agent delegation stream would still get cut off here even
+          // though the ALB alone would have tolerated it; not fixable
+          // without requesting a limit increase from AWS.
+          readTimeout: cdk.Duration.seconds(60),
+          keepaliveTimeout: cdk.Duration.seconds(60),
+        }),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        // This app is 100% dynamic (SSR pages, API routes, the live
+        // terminal's WebSocket) — nothing here is cacheable, and caching it
+        // anyway would serve one org's page to another. ALL_VIEWER forwards
+        // every header/cookie/query string the origin needs (Clerk's
+        // handshake params, the terminal's Upgrade/Connection headers for
+        // WebSocket passthrough) rather than CloudFront's default allowlist,
+        // which strips exactly the headers this app depends on.
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+      },
+      comment: isDefault ? "foundry" : `foundry-${orgName}`,
+    });
+    // What browsers actually load, OAuth callbacks redirect to, and the
+    // runtime-core WS route's Origin allowlist checks against — distinct
+    // from `appUrl` above, which stays internal-only.
+    const publicUrl = `https://${distribution.distributionDomainName}`;
 
     // --- apps/web on Fargate -------------------------------------------
     const webTaskDef = new ecs.FargateTaskDefinition(this, "WebTaskDef", {
@@ -231,13 +303,19 @@ export class FoundryStack extends cdk.Stack {
     });
     database.secret!.grantRead(webTaskDef.taskRole);
     appSecrets.grantRead(webTaskDef.taskRole);
+    runtimeCoreSecret.grantRead(webTaskDef.taskRole);
 
     const webContainer = webTaskDef.addContainer("web", {
       image: ecs.ContainerImage.fromEcrRepository(webRepo, "latest"),
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: "web", logGroup }),
-      // agent-runtime is reachable on this same ALB under /eve/* — same
-      // appUrl the web app's own public URL uses, not a separate address.
-      environment: { PORT: "3000", NEXT_PUBLIC_APP_URL: appUrl, AGENT_RUNTIME_URL: appUrl },
+      // NEXT_PUBLIC_APP_URL is what browsers see (the CloudFront HTTPS
+      // domain) — baked into the client bundle, used for OAuth callback
+      // URLs. AGENT_RUNTIME_URL is server-to-server only (this container to
+      // agent-runtime's, both inside the VPC) and deliberately stays on the
+      // internal ALB URL: routing it through CloudFront too would cap
+      // long-running eve delegation streams at CloudFront's 60s origin
+      // timeout instead of the ALB's own 300s.
+      environment: { PORT: "3000", NEXT_PUBLIC_APP_URL: publicUrl, AGENT_RUNTIME_URL: appUrl },
       secrets: {
         ...dbConnectionSecrets(database),
         CLERK_SECRET_KEY: ecs.Secret.fromSecretsManager(appSecrets, "CLERK_SECRET_KEY"),
@@ -260,7 +338,7 @@ export class FoundryStack extends cdk.Stack {
         // terminal tokens (POST /runtime-core/v1/terminal-token) after
         // apps/web's own Clerk auth + run_sessions ownership check. Never
         // sent to the browser directly; see runtime-core/server.ts.
-        RUNTIME_CORE_INTERNAL_TOKEN: ecs.Secret.fromSecretsManager(appSecrets, "RUNTIME_CORE_INTERNAL_TOKEN"),
+        RUNTIME_CORE_INTERNAL_TOKEN: ecs.Secret.fromSecretsManager(runtimeCoreSecret, "RUNTIME_CORE_INTERNAL_TOKEN"),
       },
     });
     webContainer.addPortMappings({ containerPort: 3000 });
@@ -295,6 +373,7 @@ export class FoundryStack extends cdk.Stack {
     });
     database.secret!.grantRead(agentTaskDef.taskRole);
     appSecrets.grantRead(agentTaskDef.taskRole);
+    runtimeCoreSecret.grantRead(agentTaskDef.taskRole);
     workflowFileSystem.grantReadWrite(agentTaskDef.taskRole);
     projectFilesBucket.grantReadWrite(agentTaskDef.taskRole);
 
@@ -305,11 +384,14 @@ export class FoundryStack extends cdk.Stack {
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: "agent-runtime", logGroup }),
       environment: {
         PORT: "3000",
-        APP_URL: appUrl,
+        // Public URL — used to build links in notification emails, so they
+        // need to actually resolve for whoever clicks them.
+        APP_URL: publicUrl,
         PROJECT_FILES_BUCKET: projectFilesBucket.bucketName,
-        // runtime-core/server.ts's WS terminal route origin allowlist —
-        // only this app's own real origin may open a terminal socket.
-        APP_ORIGINS: appUrl,
+        // runtime-core/server.ts's WS terminal route origin allowlist — a
+        // browser's Origin header on the terminal's WS upgrade will be the
+        // CloudFront domain now, not the raw ALB URL.
+        APP_ORIGINS: publicUrl,
       },
       secrets: {
         ...dbConnectionSecrets(database),
@@ -343,7 +425,7 @@ export class FoundryStack extends cdk.Stack {
         TELEGRAM_BOT_USERNAME: ecs.Secret.fromSecretsManager(appSecrets, "TELEGRAM_BOT_USERNAME"),
         // runtime-core/server.ts's own auth — see start.mjs, which runs it
         // alongside eve as a second process in this same container/task.
-        RUNTIME_CORE_INTERNAL_TOKEN: ecs.Secret.fromSecretsManager(appSecrets, "RUNTIME_CORE_INTERNAL_TOKEN"),
+        RUNTIME_CORE_INTERNAL_TOKEN: ecs.Secret.fromSecretsManager(runtimeCoreSecret, "RUNTIME_CORE_INTERNAL_TOKEN"),
       },
     });
     agentContainer.addPortMappings({ containerPort: 3000 }, { containerPort: 3313 });
@@ -526,10 +608,12 @@ export class FoundryStack extends cdk.Stack {
 
     // --- Outputs --------------------------------------------------------
     new cdk.CfnOutput(this, "AlbDnsName", { value: alb.loadBalancerDnsName });
+    new cdk.CfnOutput(this, "PublicUrl", { value: publicUrl });
     new cdk.CfnOutput(this, "WebRepoUri", { value: webRepo.repositoryUri });
     new cdk.CfnOutput(this, "AgentRuntimeRepoUri", { value: agentRepo.repositoryUri });
     new cdk.CfnOutput(this, "DbSecretArn", { value: database.secret!.secretArn });
     new cdk.CfnOutput(this, "AppSecretsArn", { value: appSecrets.secretArn });
+    new cdk.CfnOutput(this, "RuntimeCoreSecretArn", { value: runtimeCoreSecret.secretArn });
     if (deployRoleArn) new cdk.CfnOutput(this, "GithubDeployRoleArn", { value: deployRoleArn });
     if (cdkDeployRoleArn) new cdk.CfnOutput(this, "GithubCdkDeployRoleArn", { value: cdkDeployRoleArn });
   }
