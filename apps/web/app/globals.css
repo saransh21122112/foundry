@@ -1,32 +1,69 @@
 /* ===========================================================================
    Foundry design tokens
-   The name is the brief: a foundry forges raw material under controlled
-   heat. Autonomy level *is* the heat this product's departments are allowed
-   to run at — off (cold), draft_only (warming), bounded_autonomous (hot).
-   That mapping drives the palette and the AutonomyGauge signature element;
-   everything else stays quiet around it.
+   Rebuilt on OpenClaw's actual design system (ui/docs/design-system/*.md,
+   ui/src/styles/base.css in openclaw-main.zip) — a dark-first, glass-surface
+   system: deep charcoal base, WCAG-audited text contrast, a signature accent
+   used sparingly, and depth from layered opacity/blur rather than flat panel
+   borders alone. Token *names* below stay Foundry's own (--ink, --surface,
+   --ember, etc.) so the ~20 files with inline `var(--iron)`-style references
+   don't need touching — only the values and how sparingly some of them get
+   used moved to match OpenClaw's actual numbers.
    ========================================================================= */
 
 :root {
-  --ink: #16151a; /* page background — oxidized steel */
-  --surface: #201f26; /* panel/card background */
-  --surface-2: #2a2830; /* nested/hover surface */
-  --line: #37343d; /* hairline borders */
+  --ink: #0e1015; /* page background — was #16151a, OpenClaw's --bg */
+  --surface: #161920; /* panel/card background — OpenClaw's --card */
+  --surface-2: #1f2330; /* nested/hover surface — OpenClaw's --bg-hover */
+  --line: #1e2028; /* hairline borders — OpenClaw's --border */
+  --line-strong: #2e3040; /* active/focused borders — OpenClaw's --border-strong */
 
-  --paper: #edeae3; /* primary text — warm off-white */
-  --iron: #8b877e; /* muted text */
-  --iron-dim: #625f5a; /* faint text, placeholders */
+  /* Text — the real fix for "hard to read": --iron was #8b877e (dubious
+     contrast on the old bg), now OpenClaw's audited --text (~10:1 on --bg).
+     --iron-dim was #625f5a (likely below AA), now OpenClaw's audited --muted
+     (~5.6:1) — still legible, not just "the dim one". */
+  --paper: #f4f4f5; /* primary text — OpenClaw's --text-strong, ~17:1 */
+  --iron: #bcbcc0; /* body/secondary text — OpenClaw's --text, ~10:1 */
+  --iron-dim: #8b8b94; /* metadata/placeholder — OpenClaw's --muted, ~5.6:1 */
 
-  --ember: #f2843d; /* molten accent — primary actions, "warming" */
-  --ember-hot: #e5484d; /* danger — irreversible/financial/legal, "hot" */
-  --cool: #3ed9b0; /* success/executed, "cold/safe" reads as off-state too */
-  --cold: #5b7a94; /* off / inactive gauge state */
+  /* Accent — OpenClaw's signature coral red, used with restraint (primary
+     actions, active nav, focus ring) rather than overloaded onto every
+     "notable" state the way the old single ember token was. */
+  --ember: #ff5c5c;
+  --ember-hover: #ff7070;
+  --ember-hot: #f87171; /* danger — errors/violations/destructive, distinct hue from accent */
+  --cool: #22c55e; /* success/executed — OpenClaw's --ok */
+  --cold: #55586a; /* off / inert gauge state — neutral, not a "color" */
+  --warn: #f59e0b; /* NEW — caution/in-progress/medium-risk, OpenClaw's --warn */
+  --run: #14b8a6; /* NEW — live/in-progress indicator, OpenClaw's --accent-2;
+                      kept distinct from --ember so a "working…" pulse never
+                      reads as an error the way a red spinner would */
 
   --font-display: var(--font-space-grotesk), "Space Grotesk", ui-sans-serif, sans-serif;
   --font-body: var(--font-inter), "Inter", ui-sans-serif, sans-serif;
   --font-mono: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, monospace;
 
-  --radius: 3px;
+  --radius: 10px; /* was 3px — OpenClaw's --radius-md */
+  --radius-lg: 14px; /* OpenClaw's --radius-lg, for panels/settings groups */
+
+  /* Spacing scale — OpenClaw's base.css. New surfaces (settings rows/groups)
+     use these; existing raw-px layout is grandfathered per OpenClaw's own
+     "adopt when rewriting, don't mass-migrate" rule. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
+
+  --duration-fast: 100ms;
+  --duration-normal: 180ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --focus-ring: 0 0 0 2px var(--ink), 0 0 0 4px color-mix(in srgb, var(--ember) 80%, transparent);
 }
 
 * {
@@ -41,7 +78,7 @@ body {
 
 body {
   background: var(--ink);
-  color: var(--paper);
+  color: var(--iron);
   font-family: var(--font-body);
   font-size: 15px;
   line-height: 1.5;
@@ -54,6 +91,7 @@ h3 {
   font-family: var(--font-display);
   font-weight: 700;
   letter-spacing: -0.01em;
+  color: var(--paper);
   margin: 0 0 0.5em;
 }
 
@@ -70,6 +108,88 @@ code,
   font-family: var(--font-mono);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+html {
+  /* Anchor jumps (e.g. Departments' "Review below" suggestion link) glide
+     instead of snapping. The reduced-motion block above already forces
+     this back to `auto` — no separate override needed here. */
+  scroll-behavior: smooth;
+}
+
+/* Thin, theme-matched scrollbars instead of the default OS chrome, which
+   renders as a stark light-gray bar against this dark palette. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-2) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--surface-2);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--line-strong);
+}
+
+/* --- Loading skeleton (app/dashboard/loading.tsx) -------------------------- */
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200px 0;
+  }
+  100% {
+    background-position: calc(200px + 100%) 0;
+  }
+}
+.skeleton-line {
+  height: 14px;
+  width: 100%;
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 50%, var(--surface) 75%);
+  background-size: 200px 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+.skeleton-eyebrow {
+  width: 140px;
+  height: 11px;
+}
+.skeleton-title {
+  width: 240px;
+  height: 30px;
+  margin-bottom: 16px;
+}
+.skeleton-lede {
+  width: 70%;
+  margin-bottom: 28px;
+}
+.skeleton-panel .skeleton-line:last-child {
+  margin-bottom: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line {
+    animation: none;
+    background: var(--surface);
+  }
+}
+
 /* --- Layout shell -------------------------------------------------------- */
 
 .shell {
@@ -80,8 +200,13 @@ code,
 .rail {
   width: 216px;
   flex-shrink: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--line);
+  /* OpenClaw's nav chrome uses a real backdrop-filter blur since content
+     scrolls behind it. This sidebar has nothing but flat page background
+     behind it, so blur bought no visible depth for real GPU/repaint cost —
+     dropping it, keeping just the translucent tint, was measurably faster
+     with an identical look here (a flat surface has nothing to blur into). */
+  background: color-mix(in srgb, var(--ink) 92%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
   padding: 24px 16px;
   display: flex;
   flex-direction: column;
@@ -125,7 +250,7 @@ code,
   letter-spacing: 0.04em;
   padding: 8px 10px;
   border-radius: var(--radius);
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 .rail-nav small {
   display: block;
@@ -150,10 +275,16 @@ code,
 }
 
 .main {
+  /* flex:1 with no auto margins means a hard max-width here doesn't center
+     the content — it just leaves the leftover flex-row space sitting empty
+     on the right (the exact "lots of space on the right" bug). Individual
+     long-form text elements already cap their own reading width (.lede
+     62ch, .hero 720px), so .main itself only needs a ceiling for truly
+     oversized monitors, not a typical-desktop-width cap. */
   flex: 1;
   min-width: 0;
   padding: 40px 48px;
-  max-width: 1100px;
+  max-width: 1600px;
 }
 
 @media (max-width: 720px) {
@@ -210,7 +341,7 @@ code,
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--iron);
+  color: var(--iron-dim);
   margin: 0 0 6px;
 }
 
@@ -225,15 +356,10 @@ code,
 .panel {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   padding: 20px 24px;
   margin-bottom: 20px;
-  /* Subtle depth instead of pure flat-on-flat — a hairline top highlight
-     (reads as a bevel catching light) plus a soft drop shadow so panels
-     lift slightly off the page background. Cheap, no layout impact. */
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    0 1px 3px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-sm);
 }
 
 .panel-empty {
@@ -254,7 +380,7 @@ th {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--iron);
+  color: var(--iron-dim);
   font-weight: 500;
   padding: 0 12px 10px 0;
   border-bottom: 1px solid var(--line);
@@ -266,6 +392,12 @@ td {
 }
 tr:last-child td {
   border-bottom: none;
+}
+tbody tr {
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+tbody tr:hover {
+  background: var(--surface-2);
 }
 tr.row-failed {
   background: color-mix(in srgb, var(--ember-hot) 10%, transparent);
@@ -280,23 +412,28 @@ tr.row-failed:hover {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   background: transparent;
-  color: var(--paper);
+  color: var(--iron);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 7px 14px;
   cursor: pointer;
-  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
 .btn:hover {
-  border-color: var(--iron);
+  border-color: var(--line-strong);
   background: var(--surface-2);
+  color: var(--paper);
 }
 .btn:active {
   transform: translateY(1px);
 }
 .btn:focus-visible {
-  outline: 2px solid var(--ember);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 .btn-approve {
   border-color: var(--cool);
@@ -304,6 +441,7 @@ tr.row-failed:hover {
 }
 .btn-approve:hover {
   background: color-mix(in srgb, var(--cool) 12%, transparent);
+  color: var(--cool);
 }
 .btn-reject {
   border-color: var(--ember-hot);
@@ -311,15 +449,21 @@ tr.row-failed:hover {
 }
 .btn-reject:hover {
   background: color-mix(in srgb, var(--ember-hot) 12%, transparent);
+  color: var(--ember-hot);
 }
+/* Accent used with restraint: the filled/primary treatment is reserved for
+   the one main call-to-action per view, per OpenClaw's own anti-pattern
+   list — every other .btn stays quiet (outline only, see above). */
 .btn-primary {
   background: var(--ember);
   border-color: var(--ember);
-  color: var(--ink);
+  color: #1a0d0d;
   font-weight: 600;
 }
 .btn-primary:hover {
-  background: color-mix(in srgb, var(--ember) 85%, white);
+  background: var(--ember-hover);
+  border-color: var(--ember-hover);
+  color: #1a0d0d;
 }
 
 input[type="text"],
@@ -333,21 +477,21 @@ select {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 7px 10px;
-  transition: border-color 0.15s ease;
+  transition: border-color var(--duration-fast) var(--ease-out);
 }
 input[type="text"]:hover,
 input[type="email"]:hover,
 input[type="number"]:hover,
 select:hover {
-  border-color: var(--iron);
+  border-color: var(--line-strong);
 }
 select {
   /* Native select chevrons render in the OS's own light-mode style on most
      platforms — a jarring mismatch against this dark theme. Swap it for a
-     flat SVG chevron in --iron so it reads as part of the same system. */
+     flat SVG chevron so it reads as part of the same system. */
   appearance: none;
   padding-right: 28px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%238b877e' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%238b8b94' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
   cursor: pointer;
@@ -363,22 +507,22 @@ textarea {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 10px 12px;
-  transition: border-color 0.15s ease;
+  transition: border-color var(--duration-fast) var(--ease-out);
 }
 textarea:hover {
-  border-color: var(--iron);
+  border-color: var(--line-strong);
 }
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid var(--ember);
-  outline-offset: 1px;
+  outline: none;
+  border-color: var(--ember);
+  box-shadow: var(--focus-ring);
 }
 
 /* Native checkbox/radio controls render in the OS accent color (usually
    blue) by default — accent-color is the one-line fix that lets them
-   follow the theme instead of clashing with it on every settings page
-   (Departments' autonomy radios, Tools' allowlist checkboxes, etc.). */
+   follow the theme instead of clashing with it. */
 input[type="checkbox"],
 input[type="radio"] {
   accent-color: var(--ember);
@@ -392,7 +536,7 @@ label {
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
-  color: var(--iron);
+  color: var(--iron-dim);
   font-family: var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -415,7 +559,7 @@ label {
   padding: 2px 8px;
   border-radius: var(--radius);
   border: 1px solid var(--line);
-  color: var(--iron);
+  color: var(--iron-dim);
 }
 .badge-risk-financial,
 .badge-risk-legal,
@@ -423,9 +567,11 @@ label {
   border-color: var(--ember-hot);
   color: var(--ember-hot);
 }
+/* Medium risk reads as caution, not as a primary/danger state — --warn
+   (amber), not accent red or danger red, per OpenClaw's semantic split. */
 .badge-risk-reversible-high {
-  border-color: var(--ember);
-  color: var(--ember);
+  border-color: var(--warn);
+  color: var(--warn);
 }
 .badge-risk-reversible-low {
   border-color: var(--cool);
@@ -433,9 +579,12 @@ label {
 }
 
 /* --- Autonomy gauge: the signature element ---------------------------------
-   A 3-segment heat readout for off / draft_only / bounded_autonomous. This
-   is the one place the design allows itself real color intensity — it's
-   literally rendering the autonomy_level enum, not decorating the page. */
+   A 3-segment heat readout for off / draft_only / bounded_autonomous.
+   off = neutral (nothing happening), draft_only = --warn (caution/pending
+   review), bounded_autonomous = --ember (the one state that gets the
+   signature accent, since it's the "most active/trusted" tier — not
+   --ember-hot/danger, which OpenClaw's own anti-pattern list specifically
+   warns against using for a non-error "hot feature" state). */
 
 .gauge {
   display: inline-flex;
@@ -445,7 +594,7 @@ label {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--iron);
+  color: var(--iron-dim);
 }
 .gauge-track {
   display: flex;
@@ -462,11 +611,90 @@ label {
 }
 .gauge[data-level="draft_only"] .gauge-seg:nth-child(1),
 .gauge[data-level="draft_only"] .gauge-seg:nth-child(2) {
-  background: var(--ember);
+  background: var(--warn);
 }
 .gauge[data-level="bounded_autonomous"] .gauge-seg {
-  background: var(--ember-hot);
-  box-shadow: 0 0 6px 0 color-mix(in srgb, var(--ember-hot) 60%, transparent);
+  background: var(--ember);
+  box-shadow: 0 0 6px 0 color-mix(in srgb, var(--ember) 60%, transparent);
+}
+
+/* --- Settings anatomy (OpenClaw's settings-design.md) -----------------------
+   section (typography only, heading outside any surface) -> one group (the
+   ONLY surface) -> rows (title+description left, one control right, hairline
+   divider between). Used by Departments and Budgets. Never nest a card
+   inside a card — a row's control is a plain input/select/toggle, not
+   another .panel. */
+
+.settings-section {
+  margin-bottom: var(--space-7);
+}
+.settings-section__heading {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--iron-dim);
+  margin: 0 0 var(--space-2);
+}
+.settings-group {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+.settings-row + .settings-row {
+  border-top: 1px solid var(--line);
+}
+.settings-row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+.settings-row__title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--paper);
+  margin: 0;
+}
+.settings-row__description {
+  font-size: 12.5px;
+  color: var(--iron);
+  margin: 2px 0 0;
+}
+.settings-row__control {
+  flex-shrink: 0;
+}
+.settings-option {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  cursor: pointer;
+  text-transform: none;
+  font-family: var(--font-body);
+}
+.settings-option input {
+  margin-top: 3px;
+}
+.settings-option__label {
+  font-size: 13px;
+  color: var(--paper);
+  font-weight: 500;
+}
+.settings-option__description {
+  font-size: 12.5px;
+  color: var(--iron);
+  font-weight: 400;
+  display: block;
+  margin-top: 2px;
 }
 
 /* --- Homepage ------------------------------------------------------------ */
@@ -505,7 +733,7 @@ label {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   overflow: hidden;
   max-width: 780px;
 }
@@ -527,7 +755,7 @@ label {
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 .hero-nav a:hover {
   background: var(--surface-2);
@@ -545,7 +773,7 @@ label {
 }
 .hero-nav a::after {
   content: "→";
-  color: var(--iron);
+  color: var(--iron-dim);
 }
 
 /* --- Run a task ----------------------------------------------------------- */
@@ -559,13 +787,13 @@ label {
   color: var(--paper);
 }
 .transcript-entry-system .transcript-label {
-  color: var(--iron);
+  color: var(--iron-dim);
 }
 .transcript-entry-agent .transcript-label {
   color: var(--ember);
 }
 .transcript-entry-pending .transcript-label {
-  color: var(--ember-hot);
+  color: var(--warn);
 }
 .transcript-entry-tool .transcript-label {
   color: var(--cool);
@@ -594,7 +822,7 @@ label {
   font-size: 12.5px;
 }
 .transcript-entry-verbose .transcript-body {
-  color: var(--iron);
+  color: var(--iron-dim);
 }
 
 .verbose-toggle {
@@ -614,7 +842,7 @@ label {
 .callout {
   border: 1px solid var(--ember);
   background: color-mix(in srgb, var(--ember) 8%, var(--surface));
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   padding: 14px 18px;
   margin-bottom: 20px;
 }
@@ -628,7 +856,9 @@ label {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--ember);
+  /* --run, not --ember: a red pulse next to "working…" reads as an error
+     about to happen, not neutral live activity — see --run's own comment. */
+  background: var(--run);
   animation: pulse 1.2s ease-in-out infinite;
 }
 
@@ -673,11 +903,11 @@ label {
   padding: 9px 12px;
   cursor: pointer;
   text-align: left;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
 }
 .task-list-item:hover {
   background: var(--surface-2);
-  border-color: var(--iron);
+  border-color: var(--line-strong);
 }
 .task-list-item.active {
   border-left-color: var(--ember);
@@ -797,6 +1027,7 @@ label {
     border-color: #ccc !important;
     background: #fff !important;
     color: #111 !important;
+    box-shadow: none !important;
   }
 }
 
@@ -811,7 +1042,7 @@ label {
 .calendar-day {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   padding: 12px;
   min-height: 140px;
 }
@@ -832,7 +1063,7 @@ label {
   border-left: 2px solid var(--ember);
   border-radius: var(--radius);
   padding: 8px 10px;
-  transition: border-color 0.15s ease;
+  transition: border-color var(--duration-fast) var(--ease-out);
 }
 .calendar-card-title {
   display: block;
@@ -842,7 +1073,7 @@ label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: color 0.15s ease;
+  transition: color var(--duration-fast) var(--ease-out);
 }
 .calendar-card-title:hover {
   color: var(--ember);

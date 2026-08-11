@@ -41,7 +41,17 @@ export function LiveTerminal() {
         cursorBlink: true,
         fontSize: 13,
         fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-        theme: { background: "#0b0d0f" },
+        // xterm can't read CSS custom properties directly — matches
+        // globals.css's --ink/--paper/--ember/--iron so the terminal reads
+        // as part of the same surface instead of its own one-off dark box.
+        theme: {
+          background: "#0e1015",
+          foreground: "#f4f4f5",
+          cursor: "#ff5c5c",
+          selectionBackground: "#005fcc",
+          black: "#161920",
+          brightBlack: "#8b8b94",
+        },
       });
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
@@ -134,7 +144,11 @@ export function LiveTerminal() {
           {status === "error" && (errorMessage ?? "error")}
         </span>
       </div>
-      <div ref={containerRef} style={{ height: 360, padding: 8 }} />
+      {/* The sole content of the Run page now — fill the available viewport
+          instead of sitting as a small fixed-height box with empty space
+          below it. 200px accounts for the rail/heading/lede above it and
+          the page's own top/bottom padding. */}
+      <div ref={containerRef} style={{ height: "calc(100vh - 200px)", minHeight: 360, padding: 8 }} />
     </div>
   );
 }

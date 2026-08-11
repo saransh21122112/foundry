@@ -71,7 +71,7 @@ export default async function BudgetsPage() {
                             height: 4,
                             width: `${pct}%`,
                             borderRadius: 2,
-                            background: pct > 80 ? "var(--ember-hot)" : "var(--ember)",
+                            background: pct > 80 ? "var(--warn)" : "var(--ember)",
                           }}
                         />
                       </div>
@@ -92,46 +92,50 @@ export default async function BudgetsPage() {
         )}
       </div>
 
-      <p className="eyebrow" style={{ marginTop: 32 }}>Set a cap</p>
-      <div className="panel">
-        <form action={updateBudgetCap} className="field-row">
-          <label>
-            Department
-            <select name="department" required defaultValue="org-wide">
-              <option value="org-wide">All departments (org-wide)</option>
-              {DEPARTMENTS.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Resets
-            <select name="scope" required>
-              {SCOPES.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Unit
-            <input type="text" name="unit" placeholder="usd, emails_sent" required />
-            <span className="mono" style={{ fontSize: 11, color: "var(--iron-dim)", textTransform: "none" }}>
-              Whatever a tool reports spending — usually usd or a count like emails_sent.
-            </span>
-          </label>
-          <label>
-            Cap amount
-            <input type="number" name="capAmount" min="0" step="any" required />
-          </label>
-          <button type="submit" className="btn btn-primary">
-            Save
-          </button>
-        </form>
-      </div>
+      <section className="settings-section">
+        <h2 className="settings-section__heading">Set a cap</h2>
+        <div className="settings-group">
+          <form action={updateBudgetCap}>
+            <div className="settings-row">
+              <p className="settings-row__title">Department</p>
+              <select className="settings-row__control" name="department" required defaultValue="org-wide" aria-label="Department">
+                <option value="org-wide">All departments (org-wide)</option>
+                {DEPARTMENTS.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="settings-row">
+              <p className="settings-row__title">Resets</p>
+              <select className="settings-row__control" name="scope" required aria-label="Resets">
+                {SCOPES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="settings-row">
+              <div>
+                <p className="settings-row__title">Unit</p>
+                <p className="settings-row__description">Whatever a tool reports spending — usually usd or a count like emails_sent.</p>
+              </div>
+              <input className="settings-row__control mono" type="text" name="unit" placeholder="usd, emails_sent" required aria-label="Unit" style={{ width: 160 }} />
+            </div>
+            <div className="settings-row">
+              <p className="settings-row__title">Cap amount</p>
+              <input className="settings-row__control mono" type="number" name="capAmount" min="0" step="any" required aria-label="Cap amount" style={{ width: 160 }} />
+            </div>
+            <div className="settings-row">
+              <button type="submit" className="btn btn-primary">
+                Save
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
     </main>
   );
 }

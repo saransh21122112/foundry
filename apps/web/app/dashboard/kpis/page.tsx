@@ -29,23 +29,25 @@ export default async function KpisPage() {
   const org = await ensureOrganization({ clerkOrgId, slug: orgSlug ?? undefined });
   const windowStart = new Date(Date.now() - 24 * 60 * 60_000);
 
-  const breakdown = await db
-    .select({
-      department: activityLog.department,
-      eventType: activityLog.eventType,
-      count: sql<number>`count(*)::int`,
-    })
-    .from(activityLog)
-    .where(and(eq(activityLog.orgId, org.id), gte(activityLog.timestamp, windowStart)))
-    .groupBy(activityLog.department, activityLog.eventType);
-
-  const pendingByDept = await db
-    .select({ department: approvalRequests.department, count: sql<number>`count(*)::int` })
-    .from(approvalRequests)
-    .where(and(eq(approvalRequests.orgId, org.id), eq(approvalRequests.status, "pending")))
-    .groupBy(approvalRequests.department);
-
-  const caps = await db.select().from(budgetCaps).where(eq(budgetCaps.orgId, org.id));
+  // Independent queries — run together instead of stacking three sequential
+  // DB round-trips on every page load.
+  const [breakdown, pendingByDept, caps] = await Promise.all([
+    db
+      .select({
+        department: activityLog.department,
+        eventType: activityLog.eventType,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(activityLog)
+      .where(and(eq(activityLog.orgId, org.id), gte(activityLog.timestamp, windowStart)))
+      .groupBy(activityLog.department, activityLog.eventType),
+    db
+      .select({ department: approvalRequests.department, count: sql<number>`count(*)::int` })
+      .from(approvalRequests)
+      .where(and(eq(approvalRequests.orgId, org.id), eq(approvalRequests.status, "pending")))
+      .groupBy(approvalRequests.department),
+    db.select().from(budgetCaps).where(eq(budgetCaps.orgId, org.id)),
+  ]);
 
   const totalCalls = breakdown.reduce((sum, r) => sum + r.count, 0);
   const totalPending = pendingByDept.reduce((sum, r) => sum + r.count, 0);

@@ -11,10 +11,11 @@ import { db, ensureOrganization, runSessions } from "@foundry/db";
  * admin-only (see lib/authz.ts's requireOrgAdmin, deliberately not used
  * here).
  *
- * Also records the session in our own `run_sessions` index so the Run page
+ * Also records the session in our own `run_sessions` index so this page
  * can list an org's tasks (see listTasks below) — eve itself has no
  * list-sessions endpoint; this is the "application concern" its own docs
- * point to (patterns/multi-tenant-approvals.md).
+ * point to (patterns/multi-tenant-approvals.md). Calendar reads the same
+ * table to show "every task your company has run".
  */
 export async function startTask(message: string): Promise<{ sessionId: string }> {
   const { userId, orgId: clerkOrgId, orgSlug, getToken } = await auth();

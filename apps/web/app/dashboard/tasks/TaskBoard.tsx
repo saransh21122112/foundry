@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { startTask, sendFollowUp, listTasks } from "./actions";
-import { LiveTerminal } from "./LiveTerminal";
 
 interface LogEntry {
   kind: "you" | "system" | "agent" | "pending" | "tool" | "reasoning" | "step";
@@ -298,7 +297,7 @@ async function replayTranscript(
   return cursor;
 }
 
-export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
+export function TaskBoard({ initialTasks }: { initialTasks: Task[] }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const sessionIdFromUrl = searchParams.get("session");
@@ -423,7 +422,7 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
     }
   }
 
-  // Reloading /dashboard/run?session=... (back button, refresh, bookmark)
+  // Reloading /dashboard/tasks?session=... (back button, refresh, bookmark)
   // replays that session's real history instead of showing an empty page.
   // Also remembered in localStorage: clicking the sidebar's plain "Run a
   // task" link (no session in the URL at all) redirects to the last one
@@ -435,7 +434,7 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
       localStorage.setItem(LAST_SESSION_KEY, sessionIdFromUrl);
     } else {
       const last = localStorage.getItem(LAST_SESSION_KEY);
-      if (last) router.replace(`/dashboard/run?session=${last}`);
+      if (last) router.replace(`/dashboard/tasks?session=${last}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionIdFromUrl]);
@@ -450,7 +449,7 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
       // Triggers the useEffect above (sessionIdFromUrl changes) to do the
       // actual replay — don't also call runReplay() here, or the same
       // session gets read twice and every entry shows up doubled.
-      router.replace(`/dashboard/run?session=${sessionId}`);
+      router.replace(`/dashboard/tasks?session=${sessionId}`);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
     }
@@ -463,7 +462,7 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
     setLog([]);
     setPendingKind(null);
     setContinuationToken(null);
-    router.replace("/dashboard/run");
+    router.replace("/dashboard/tasks");
   }
 
   return (
@@ -472,7 +471,7 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <p className="eyebrow">Give your company something to do</p>
-            <h1>Run a task</h1>
+            <h1>Delegate a task</h1>
           </div>
           {sessionIdFromUrl && (
             <button type="button" className="btn" onClick={startNew}>
@@ -489,7 +488,8 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
           sandbox, but it can&apos;t reach anything outside that sandbox — no
           real email, no real deploys — until that gets built for it. Nothing
           it does there shows up in the Activity log, since that only records
-          actions that pass through the guardrail system.
+          actions that pass through the guardrail system. Want a real shell
+          instead of a chat? See <Link href="/dashboard/run">Run a task</Link>.
         </p>
 
         <form onSubmit={handleSubmit} className="panel">
@@ -581,15 +581,6 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
           )}
         </div>
 
-        <div style={{ marginTop: 24 }}>
-          <p className="eyebrow">Real, live shell — not a replay</p>
-          <p className="lede" style={{ marginTop: 4 }}>
-            A genuine terminal on this deployment&apos;s own host, real-time. Separate from the task above: this is
-            something YOU type into directly, not a log of what an agent did.
-          </p>
-          <LiveTerminal />
-        </div>
-
         {continuationToken && !running && (
           <form onSubmit={handleReply} className="panel" style={{ marginTop: 14 }}>
             <textarea
@@ -620,7 +611,7 @@ export function RunBoard({ initialTasks }: { initialTasks: Task[] }) {
                 <button
                   type="button"
                   className={`task-list-item${task.id === sessionIdFromUrl ? " active" : ""}`}
-                  onClick={() => router.replace(`/dashboard/run?session=${task.id}`)}
+                  onClick={() => router.replace(`/dashboard/tasks?session=${task.id}`)}
                   title={task.title}
                 >
                   <span className="task-list-title">{task.title}</span>

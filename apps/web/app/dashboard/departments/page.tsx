@@ -21,22 +21,29 @@ export default async function DepartmentsPage() {
   }
 
   const org = await ensureOrganization({ clerkOrgId, slug: orgSlug ?? undefined });
-  const rows = await db.select().from(departmentConfigs).where(eq(departmentConfigs.orgId, org.id));
-  const configByDept = new Map(rows.map((r) => [r.department, r]));
 
-  const [orgRow] = await db.select({ plan: organizations.plan }).from(organizations).where(eq(organizations.id, org.id)).limit(1);
+  // Independent queries — no reason to make the page wait on them one at a
+  // time (was a real, measurable chunk of this page's load time: each is
+  // its own DB round-trip).
+  const [rows, [orgRow]] = await Promise.all([
+    db.select().from(departmentConfigs).where(eq(departmentConfigs.orgId, org.id)),
+    db.select({ plan: organizations.plan }).from(organizations).where(eq(organizations.id, org.id)).limit(1),
+  ]);
+  const configByDept = new Map(rows.map((r) => [r.department, r]));
   const plan = orgRow?.plan ?? "free";
 
   // Only draft_only + enabled departments can even be promoted (the only
-  // real path is draft_only -> bounded_autonomous) — cheap enough to compute
-  // per-row, no batching needed at this scale.
-  const suggestions = new Map<string, Awaited<ReturnType<typeof computeAutonomySuggestion>>>();
-  for (const department of DEPARTMENTS) {
+  // real path is draft_only -> bounded_autonomous). Each call is 2 DB
+  // queries (lib/autonomy-suggestion.ts) — run them in parallel rather
+  // than serialized one department at a time.
+  const eligibleDepartments = DEPARTMENTS.filter((department) => {
     const config = configByDept.get(department);
-    if ((config?.enabled ?? false) && (config?.autonomyLevel ?? "draft_only") === "draft_only") {
-      suggestions.set(department, await computeAutonomySuggestion(org.id, department));
-    }
-  }
+    return (config?.enabled ?? false) && (config?.autonomyLevel ?? "draft_only") === "draft_only";
+  });
+  const suggestionResults = await Promise.all(
+    eligibleDepartments.map((department) => computeAutonomySuggestion(org.id, department)),
+  );
+  const suggestions = new Map(eligibleDepartments.map((department, i) => [department, suggestionResults[i]]));
 
   return (
     <main>
@@ -56,91 +63,78 @@ export default async function DepartmentsPage() {
         const showSuggestion = !!suggestion && suggestion.eligible && !suggestion.dismissed;
         const radioGroupId = `autonomy-radios-${department}`;
         return (
-          <div className="panel" key={department}>
-            <DepartmentForm>
-              <input type="hidden" name="department" value={department} />
-
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-                <div>
-                  <h2 className="mono" style={{ fontSize: 15, textTransform: "uppercase", letterSpacing: "0.03em", margin: "0 0 4px" }}>
-                    {department}
-                  </h2>
-                  <p style={{ color: "var(--iron)", fontSize: 13, margin: 0 }}>{DEPARTMENT_BLURB[department]}</p>
-                </div>
-                <AutonomyGauge level={enabled ? level : "off"} />
+          <section className="settings-section" key={department}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+              <div>
+                <h2 className="settings-section__heading" style={{ marginBottom: 2 }}>
+                  {department}
+                </h2>
+                <p style={{ color: "var(--iron)", fontSize: 13, margin: 0 }}>{DEPARTMENT_BLURB[department]}</p>
               </div>
+              <AutonomyGauge level={enabled ? level : "off"} />
+            </div>
 
-              {showSuggestion && (
-                <div className="callout">
-                  <p style={{ margin: "0 0 10px", fontSize: 13 }}>
-                    {plan === "free" ? AUTONOMY_SUGGESTION.eligibleFreePlan : AUTONOMY_SUGGESTION.eligible}
-                  </p>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    {plan === "free" ? (
-                      <a href="/dashboard/billing" className="btn">
-                        Upgrade to Pro
-                      </a>
-                    ) : (
-                      <a href={`#${radioGroupId}`} className="btn">
-                        Review below
-                      </a>
-                    )}
-                    <form
-                      action={async (formData: FormData) => {
-                        "use server";
-                        await dismissAutonomySuggestion(formData);
-                      }}
-                    >
-                      <input type="hidden" name="department" value={department} />
-                      <button type="submit" className="btn">
-                        {AUTONOMY_SUGGESTION.dismiss}
-                      </button>
-                    </form>
-                  </div>
-                </div>
-              )}
-
-              <label
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 8,
-                  marginBottom: 16,
-                  paddingBottom: 16,
-                  borderBottom: "1px solid var(--line)",
-                }}
-              >
-                <input type="checkbox" name="enabled" defaultChecked={enabled} />
-                Turn this department on
-              </label>
-
-              <p className="eyebrow" style={{ margin: "0 0 8px" }}>How much can it do on its own?</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-                {AUTONOMY_LEVELS.map((l: AutonomyLevel) => (
-                  <label
-                    key={l}
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "flex-start",
-                      gap: 10,
-                      textTransform: "none",
-                      fontFamily: "var(--font-body)",
-                      fontSize: 13,
-                      color: "var(--paper)",
-                      cursor: "pointer",
+            {showSuggestion && (
+              <div className="callout">
+                <p style={{ margin: "0 0 10px", fontSize: 13 }}>
+                  {plan === "free" ? AUTONOMY_SUGGESTION.eligibleFreePlan : AUTONOMY_SUGGESTION.eligible}
+                </p>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  {plan === "free" ? (
+                    <a href="/dashboard/billing" className="btn">
+                      Upgrade to Pro
+                    </a>
+                  ) : (
+                    <a href={`#${radioGroupId}`} className="btn">
+                      Review below
+                    </a>
+                  )}
+                  <form
+                    action={async (formData: FormData) => {
+                      "use server";
+                      await dismissAutonomySuggestion(formData);
                     }}
                   >
-                    <input type="radio" name="autonomyLevel" value={l} defaultChecked={level === l} style={{ marginTop: 3 }} />
-                    <span>
-                      <strong>{AUTONOMY_LABEL[l]}</strong>
-                      <br />
-                      <span style={{ color: "var(--iron)" }}>{AUTONOMY_DESCRIPTION[l]}</span>
-                    </span>
+                    <input type="hidden" name="department" value={department} />
+                    <button type="submit" className="btn">
+                      {AUTONOMY_SUGGESTION.dismiss}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            <DepartmentForm>
+              <input type="hidden" name="department" value={department} />
+              <div className="settings-group">
+                <div className="settings-row">
+                  <div>
+                    <p className="settings-row__title">Turn this department on</p>
+                    <p className="settings-row__description">Off by default — nothing happens until this is on.</p>
+                  </div>
+                  <label className="settings-row__control" style={{ flexDirection: "row" }}>
+                    <input type="checkbox" name="enabled" defaultChecked={enabled} aria-label="Turn this department on" />
                   </label>
-                ))}
+                </div>
+                <div className="settings-row settings-row--stacked" id={radioGroupId}>
+                  <p className="settings-row__title" style={{ marginBottom: 4 }}>
+                    How much can it do on its own?
+                  </p>
+                  <div>
+                    {AUTONOMY_LEVELS.map((l: AutonomyLevel) => (
+                      <label key={l} className="settings-option">
+                        <input type="radio" name="autonomyLevel" value={l} defaultChecked={level === l} />
+                        <span>
+                          <span className="settings-option__label">{AUTONOMY_LABEL[l]}</span>
+                          <span className="settings-option__description">{AUTONOMY_DESCRIPTION[l]}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
               </div>
             </DepartmentForm>
-          </div>
+          </section>
         );
       })}
     </main>

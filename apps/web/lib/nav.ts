@@ -9,7 +9,8 @@
  */
 export const NAV = [
   { href: "/dashboard/onboarding", label: "Get set up", blurb: "First-run setup" },
-  { href: "/dashboard/run", label: "Run a task", blurb: "Give your company something to do" },
+  { href: "/dashboard/run", label: "Run a task", blurb: "A real terminal on this deployment's own host" },
+  { href: "/dashboard/tasks", label: "Delegate a task", blurb: "Give your company something to do, by chat" },
   { href: "/dashboard/calendar", label: "Calendar", blurb: "Tasks by day, and by status" },
   { href: "/dashboard/approvals", label: "Approvals", blurb: "Say yes or no" },
   { href: "/dashboard/kill-switch", label: "Kill switch", blurb: "Emergency stop, org-wide or per department" },

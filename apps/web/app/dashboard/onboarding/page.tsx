@@ -39,7 +39,7 @@ export default async function OnboardingPage({
           Your departments and budget are configured. Fine-tune anything
           later from Departments or Budgets in the sidebar.
         </p>
-        <Link href="/dashboard/run" className="btn btn-primary">
+        <Link href="/dashboard/tasks" className="btn btn-primary">
           Go run your first task
         </Link>
       </main>
@@ -50,10 +50,10 @@ export default async function OnboardingPage({
   const rows = await db.select({ id: departmentConfigs.id }).from(departmentConfigs).where(eq(departmentConfigs.orgId, org.id));
 
   // A configured org has already been through this flow (or the
-  // Departments page directly) — send it straight to Run instead of
-  // re-showing first-run setup.
+  // Departments page directly) — send it straight to task delegation
+  // instead of re-showing first-run setup.
   if (rows.length > 0) {
-    redirect("/dashboard/run");
+    redirect("/dashboard/tasks");
   }
 
   return (

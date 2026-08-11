@@ -111,10 +111,10 @@ export function GraphView({ nodes, orgLabel }: { nodes: GraphDeptNode[]; orgLabe
         ctx!.moveTo(cx, cy);
         ctx!.lineTo(x, y);
         ctx!.strokeStyle = blocked
-          ? "rgba(229,72,77,0.55)"
+          ? "rgba(248,113,113,0.55)"
           : active
             ? `hsl(${hue} 75% 60% / 0.55)`
-            : "rgba(237,234,227,0.08)";
+            : "rgba(244,244,245,0.08)";
         ctx!.lineWidth = active || blocked ? 1.8 : 1;
         ctx!.stroke();
 
@@ -139,16 +139,16 @@ export function GraphView({ nodes, orgLabel }: { nodes: GraphDeptNode[]; orgLabe
       ctx!.beginPath();
       ctx!.arc(cx, cy, 22, 0, Math.PI * 2);
       const g = ctx!.createRadialGradient(cx, cy, 0, cx, cy, 22);
-      g.addColorStop(0, "#ffd9b0");
-      g.addColorStop(0.55, "#f2843d");
-      g.addColorStop(1, "#a8571f");
+      g.addColorStop(0, "#ffb3b3");
+      g.addColorStop(0.55, "#ff5c5c");
+      g.addColorStop(1, "#8f2f2f");
       ctx!.fillStyle = g;
-      ctx!.shadowColor = "rgba(242,132,61,0.5)";
+      ctx!.shadowColor = "rgba(255,92,92,0.5)";
       ctx!.shadowBlur = 16;
       ctx!.fill();
       ctx!.shadowBlur = 0;
       ctx!.font = "600 10px ui-monospace, monospace";
-      ctx!.fillStyle = "#16151a";
+      ctx!.fillStyle = "#0e1015";
       ctx!.textAlign = "center";
       ctx!.textBaseline = "middle";
       ctx!.fillText("ORG", cx, cy);
@@ -162,7 +162,7 @@ export function GraphView({ nodes, orgLabel }: { nodes: GraphDeptNode[]; orgLabe
           const breathe = 0.35 + 0.3 * Math.sin(now / 420);
           ctx!.beginPath();
           ctx!.arc(x, y, r + 8, 0, Math.PI * 2);
-          ctx!.strokeStyle = `rgba(229,72,77,${breathe})`;
+          ctx!.strokeStyle = `rgba(248,113,113,${breathe})`;
           ctx!.lineWidth = 2;
           ctx!.stroke();
         } else if (active) {
@@ -179,16 +179,16 @@ export function GraphView({ nodes, orgLabel }: { nodes: GraphDeptNode[]; orgLabe
         ctx!.fillStyle = `hsl(${hue} 60% 55% / 0.9)`;
         ctx!.fill();
         ctx!.lineWidth = selected === n.id ? 2 : 1.2;
-        ctx!.strokeStyle = selected === n.id ? "#edeae3" : `hsl(${hue} 80% 75%)`;
+        ctx!.strokeStyle = selected === n.id ? "#f4f4f5" : `hsl(${hue} 80% 75%)`;
         ctx!.stroke();
 
         ctx!.font = "11px ui-monospace, monospace";
         const label = n.id;
         const tw = ctx!.measureText(label).width;
         const ly = y + r + 15;
-        ctx!.fillStyle = "rgba(22,21,26,0.75)";
+        ctx!.fillStyle = "rgba(14,16,21,0.75)";
         ctx!.fillRect(x - tw / 2 - 4, ly - 9, tw + 8, 14);
-        ctx!.fillStyle = "rgba(237,234,227,0.92)";
+        ctx!.fillStyle = "rgba(244,244,245,0.92)";
         ctx!.textAlign = "center";
         ctx!.textBaseline = "alphabetic";
         ctx!.fillText(label, x, ly);

@@ -28,7 +28,7 @@ function sameDay(a: Date, b: Date): boolean {
 function TaskCard({ task, onStatusChange }: { task: CalendarTask; onStatusChange: (id: string, status: string) => void }) {
   return (
     <div className="calendar-card">
-      <a href={`/dashboard/run?session=${task.id}`} className="calendar-card-title" title={task.title}>
+      <a href={`/dashboard/tasks?session=${task.id}`} className="calendar-card-title" title={task.title}>
         {task.title}
       </a>
       <div className="calendar-card-footer">
