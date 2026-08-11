@@ -372,10 +372,24 @@ function attachTerminal(ws: WebSocket, sessionId: string): void {
     } catch {
       return;
     }
-    if (msg.type === "input" && typeof msg.data === "string") {
-      term.write(msg.data);
-    } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
-      term.resize(msg.cols, msg.rows);
+    // A message can arrive after the underlying PTY's fd is already gone
+    // (e.g. a queued resize racing the process exiting) — node-pty throws
+    // synchronously in that case (confirmed live: "ioctl(2) failed,
+    // EBADF" from term.resize()), and an uncaught throw inside a
+    // WebSocket 'message' handler crashes the whole Node process, taking
+    // down both eve and runtime-core (see start.mjs) and putting the ECS
+    // service into a genuine crash loop — this wasn't a rare edge case,
+    // it reproduced on effectively every real terminal connection. Catch
+    // and ignore: the PTY being gone just means this message is stale,
+    // not a real error worth crashing over.
+    try {
+      if (msg.type === "input" && typeof msg.data === "string") {
+        term.write(msg.data);
+      } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
+        term.resize(msg.cols, msg.rows);
+      }
+    } catch (err) {
+      console.error(`[runtime-core] terminal write/resize failed for session ${sessionId}:`, err);
     }
   });
 
