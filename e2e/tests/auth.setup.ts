@@ -10,6 +10,13 @@ const authFile = "playwright/.auth/user.json";
 // enabled, already a member of an org with org:admin (see e2e/README.md) —
 // @clerk/testing signs the user in but doesn't provision org membership.
 setup("authenticate", async ({ page }) => {
+  // Playwright's default 30s test timeout was getting eaten by clerkSetup()
+  // + page.goto() + clerk.signIn()'s own real network round trips before
+  // the 15s waitForFunction below even started — confirmed live: the
+  // diagnostic added in the catch block below never got to run because the
+  // outer test timeout closed the page first ("Target page, context or
+  // browser has been closed" instead of the intended status dump).
+  setup.setTimeout(60_000);
   await clerkSetup();
 
   const email = process.env.E2E_CLERK_USER_EMAIL;
