@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import * as path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import * as pty from "node-pty";
 
@@ -106,7 +106,16 @@ const terminals = new Map<string, TerminalEntry>();
 function terminalHomeDir(sessionId: string): string {
   const orgId = sessionId.startsWith("term-") ? sessionId.slice("term-".length) : null;
   const base = process.env.EVE_WORKFLOW_DATA_DIR ?? ".eve/.workflow-data";
-  const dir = orgId ? join(base, "terminal-homes", orgId) : join("/tmp", "terminal-homes", sessionId);
+  // Must be absolute, not just resolvable-as-cwd: this becomes $HOME, and
+  // unlike pty.spawn's own `cwd` option (which the OS resolves against the
+  // real process cwd on chdir), env vars are passed through verbatim — a
+  // relative HOME stayed relative while `pwd` reported the real resolved
+  // path, so anything joining "$(pwd)/$HOME" (confirmed live: Claude Code
+  // itself, looking for its plugin marketplace file) silently doubled the
+  // whole terminal-homes/<org> segment into a nested, growing path.
+  const dir = orgId
+    ? path.resolve(base, "terminal-homes", orgId)
+    : path.resolve("/tmp", "terminal-homes", sessionId);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
