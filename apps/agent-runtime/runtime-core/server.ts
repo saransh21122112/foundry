@@ -1,14 +1,9 @@
 import { createServer } from "node:http";
-import { randomUUID, createHmac, timingSafeEqual } from "node:crypto";
-import { EventEmitter } from "node:events";
-import { gateway } from "ai";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import * as pty from "node-pty";
-import { runAgentLoop, type AgentLoopEvent } from "@foundry/agent-runtime-core";
-import { opsManagerTools } from "./ops-manager-tools.js";
-import { makeGuardrailsBeforeToolCall } from "./guardrails-hook.js";
-import { resolveInstructions } from "./resolve-instructions.js";
-import defaultInstructions from "../agent/subagents/ops-manager/instructions.default.js";
 
 const PORT = Number(process.env.RUNTIME_CORE_PORT ?? 3313);
 
@@ -58,49 +53,6 @@ function verifyTerminalToken(sessionId: string, token: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-// Also flagged: unbounded request bodies and an unbounded, never-evicted
-// session map — both real resource-exhaustion vectors for a long-lived
-// process. Bounds below are proof-level, not tuned for production load.
-const MAX_BODY_BYTES = 100_000;
-const MAX_SESSIONS = 1000;
-const SESSION_TTL_MS = 60 * 60_000;
-
-/**
- * In-memory session store — a proof-of-migration limitation, not an
- * oversight: no persistence across a server restart. Building a real
- * `agent_sessions`/`agent_messages` table is named as follow-up work
- * (see the Phase 0 plan); premature for a proof that might get thrown
- * away. Each session's `events` array is the full replay log the stream
- * endpoint reads from; `emitter` fans out new events to any listener
- * currently attached to GET .../stream.
- */
-interface Session {
-  events: AgentLoopEvent[];
-  done: boolean;
-  emitter: EventEmitter;
-  createdAt: number;
-}
-const sessions = new Map<string, Session>();
-
-function evictStaleSessions(): void {
-  const cutoff = Date.now() - SESSION_TTL_MS;
-  for (const [id, session] of sessions) {
-    if (session.done && session.createdAt < cutoff) sessions.delete(id);
-  }
-  // Still over the cap after TTL eviction (e.g. many sessions created
-  // within one TTL window) — drop the oldest completed ones first.
-  if (sessions.size > MAX_SESSIONS) {
-    const completed = [...sessions.entries()]
-      .filter(([, s]) => s.done)
-      .sort((a, b) => a[1].createdAt - b[1].createdAt);
-    for (const [id] of completed) {
-      if (sessions.size <= MAX_SESSIONS) break;
-      sessions.delete(id);
-    }
-  }
-}
-setInterval(evictStaleSessions, 5 * 60_000).unref();
-
 /**
  * Real live terminal — a genuine PTY (node-pty), not a command-request/
  * response loop. This is what a live PTY needs that eve doesn't support:
@@ -114,22 +66,56 @@ setInterval(evictStaleSessions, 5 * 60_000).unref();
  * NOT wired: ops-manager's own tools (get_daily_ops_digest, place_call,
  * etc.) don't run shell commands at all — there's no exec-style tool on
  * this department to merge into the shared terminal stream. Agent tool
- * calls still only appear via the existing NDJSON event stream
- * (GET .../stream), not this PTY. Named in the plan as an acceptable
- * fallback rather than forcing something that doesn't apply here.
+ * calls appear through eve's own session/stream API (apps/web's
+ * agent-stream proxy), not this PTY — this file no longer runs its own
+ * parallel agent loop (that dormant /run + /stream pair was removed,
+ * 2026-08-14: unused, no DB persistence, and eve's real ops-manager
+ * subagent already does this for real).
  *
- * One PTY per session, spawned lazily on first WS connection, killed
- * when the WS closes — no reconnect-to-a-still-running-shell in this
- * pass (a real limitation, not an oversight: keeping orphaned shells
- * alive indefinitely after a client disconnects is its own resource-
- * exhaustion problem, deliberately not taken on here).
+ * One PTY per session id, spawned lazily on first WS connection and kept
+ * alive across disconnects — a socket closing (switching tabs, a page
+ * reload) only detaches it, it does NOT kill the shell. Only a long idle
+ * stretch with nobody attached kills it (evictIdleTerminals below); this
+ * replaced an earlier "kill on every close" behavior that made switching
+ * tabs and back look like a clean-slate crash (confirmed live,
+ * 2026-08-13) even though the shell itself was fine — session ids used to
+ * be minted fresh per page mount too, so there was nothing stable to
+ * reattach to even if the kill hadn't happened.
  */
-const terminals = new Map<string, pty.IPty>();
+const TERMINAL_IDLE_TTL_MS = 2 * 60 * 60_000; // no attached socket for this long -> kill it
+const TERMINAL_BUFFER_MAX_BYTES = 64_000; // recent scrollback replayed to a newly (re)attached socket
 
-function spawnTerminal(sessionId: string): pty.IPty {
+interface TerminalEntry {
+  pty: pty.IPty;
+  buffer: string;
+  attachedSockets: number;
+  lastDetachedAt: number | null;
+}
+const terminals = new Map<string, TerminalEntry>();
+
+// Persistent home per org, not this container's own ephemeral filesystem —
+// lives on the same EFS volume eve's own workflow state already uses (see
+// WorkflowStateFs / workflowAccessPoint in infra/lib/foundry-stack.ts,
+// mounted at .eve/.workflow-data relative to this process's cwd). That's
+// what makes Claude Code's config/credentials, any plugins installed from
+// inside this terminal, and shell history survive a container restart,
+// redeploy, or the user just logging out and back in — none of which
+// should wipe a shell that's conceptually "this org's own box".
+// sessionId is "term-<orgId>" (see apps/web's terminal-token route); any
+// other shape falls back to a scratch dir under /tmp rather than guessing.
+function terminalHomeDir(sessionId: string): string {
+  const orgId = sessionId.startsWith("term-") ? sessionId.slice("term-".length) : null;
+  const base = process.env.EVE_WORKFLOW_DATA_DIR ?? ".eve/.workflow-data";
+  const dir = orgId ? join(base, "terminal-homes", orgId) : join("/tmp", "terminal-homes", sessionId);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function spawnTerminal(sessionId: string): TerminalEntry {
   const existing = terminals.get(sessionId);
   if (existing) return existing;
   const shell = process.env.SHELL ?? "bash";
+  const home = terminalHomeDir(sessionId);
   // Explicit allowlist, not `process.env` wholesale — this container's env
   // holds every secret the app has (CLERK_SECRET_KEY, ANTHROPIC_API_KEY,
   // DATABASE_URL, RUNTIME_CORE_INTERNAL_TOKEN, TWILIO/GITHUB/GOOGLE
@@ -140,7 +126,7 @@ function spawnTerminal(sessionId: string): pty.IPty {
   // normal interactive shell.
   const safeEnv: Record<string, string> = {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
-    HOME: process.env.HOME ?? "/tmp",
+    HOME: home,
     TERM: "xterm-color",
     LANG: process.env.LANG ?? "C.UTF-8",
   };
@@ -158,50 +144,34 @@ function spawnTerminal(sessionId: string): pty.IPty {
     name: "xterm-color",
     cols: 80,
     rows: 24,
-    cwd: process.env.HOME,
+    cwd: home,
     env: safeEnv,
   });
-  terminals.set(sessionId, term);
+  const entry: TerminalEntry = { pty: term, buffer: "", attachedSockets: 0, lastDetachedAt: null };
+  // Kept independent of any single WS's onData subscription below, so the
+  // buffer keeps accumulating (and can be replayed) even during the gap
+  // between a tab closing and a new one reattaching.
+  term.onData((data) => {
+    entry.buffer += data;
+    if (entry.buffer.length > TERMINAL_BUFFER_MAX_BYTES) {
+      entry.buffer = entry.buffer.slice(entry.buffer.length - TERMINAL_BUFFER_MAX_BYTES);
+    }
+  });
   term.onExit(() => terminals.delete(sessionId));
-  return term;
+  terminals.set(sessionId, entry);
+  return entry;
 }
 
-async function runSession(sessionId: string, orgId: string, message: string): Promise<void> {
-  const session = sessions.get(sessionId);
-  if (!session) return;
-
-  const emit = (event: AgentLoopEvent) => {
-    session.events.push(event);
-    session.emitter.emit("event", event);
-  };
-
-  try {
-    const system = await resolveInstructions("ops-manager", "ops-manager", orgId, defaultInstructions);
-    const beforeToolCall = makeGuardrailsBeforeToolCall({ orgId, agentRunId: sessionId });
-
-    const loop = runAgentLoop({
-      // apps/agent-runtime has no real ANTHROPIC_API_KEY in this env, only
-      // AI_GATEWAY_API_KEY (Vercel AI Gateway) — using the gateway's own
-      // model id keeps this a real, live LLM call instead of a stub.
-      model: gateway("anthropic/claude-sonnet-5"),
-      system,
-      tools: opsManagerTools,
-      ctx: { session: { auth: { current: { attributes: { orgId } } } } },
-      beforeToolCall,
-      messages: [{ role: "user", content: message }],
-    });
-
-    for await (const event of loop) {
-      emit(event);
+function evictIdleTerminals(): void {
+  const cutoff = Date.now() - TERMINAL_IDLE_TTL_MS;
+  for (const [id, entry] of terminals) {
+    if (entry.attachedSockets === 0 && entry.lastDetachedAt !== null && entry.lastDetachedAt < cutoff) {
+      entry.pty.kill();
+      terminals.delete(id);
     }
-  } catch (err) {
-    emit({ type: "message.completed", text: `Error: ${err instanceof Error ? err.message : String(err)}` });
-    emit({ type: "turn.completed" });
-  } finally {
-    session.done = true;
-    session.emitter.emit("done");
   }
 }
+setInterval(evictIdleTerminals, 10 * 60_000).unref();
 
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
@@ -218,48 +188,6 @@ const server = createServer((req, res) => {
   if (!isAuthorized(req)) {
     res.writeHead(401, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "unauthorized" }));
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/runtime-core/v1/run") {
-    let body = "";
-    let tooLarge = false;
-    req.on("data", (chunk) => {
-      if (tooLarge) return;
-      body += chunk;
-      if (body.length > MAX_BODY_BYTES) {
-        tooLarge = true;
-        res.writeHead(413, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "request body too large" }));
-        req.destroy();
-      }
-    });
-    req.on("end", () => {
-      if (tooLarge) return;
-      let parsed: { orgId?: unknown; message?: unknown };
-      try {
-        parsed = JSON.parse(body || "{}");
-      } catch {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "invalid JSON body" }));
-        return;
-      }
-      if (typeof parsed.orgId !== "string" || typeof parsed.message !== "string") {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "orgId and message are both required strings" }));
-        return;
-      }
-
-      evictStaleSessions();
-      const sessionId = randomUUID();
-      sessions.set(sessionId, { events: [], done: false, emitter: new EventEmitter(), createdAt: Date.now() });
-      // Start now, stream progress separately — same shape RunBoard.tsx
-      // already expects from eve, per the Phase 0 plan. Not awaited.
-      void runSession(sessionId, parsed.orgId, parsed.message);
-
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ sessionId }));
-    });
     return;
   }
 
@@ -284,36 +212,6 @@ const server = createServer((req, res) => {
       const token = signTerminalToken(parsed.sessionId, expiresAt);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ token, expiresAt }));
-    });
-    return;
-  }
-
-  const streamMatch = url.pathname.match(/^\/runtime-core\/v1\/session\/([^/]+)\/stream$/);
-  if (req.method === "GET" && streamMatch) {
-    const sessionId = decodeURIComponent(streamMatch[1]);
-    const session = sessions.get(sessionId);
-    if (!session) {
-      res.writeHead(404, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "unknown session id" }));
-      return;
-    }
-
-    res.writeHead(200, { "content-type": "application/x-ndjson", "cache-control": "no-cache" });
-    for (const event of session.events) {
-      res.write(JSON.stringify(event) + "\n");
-    }
-    if (session.done) {
-      res.end();
-      return;
-    }
-
-    const onEvent = (event: AgentLoopEvent) => res.write(JSON.stringify(event) + "\n");
-    const onDone = () => res.end();
-    session.emitter.on("event", onEvent);
-    session.emitter.on("done", onDone);
-    req.on("close", () => {
-      session.emitter.off("event", onEvent);
-      session.emitter.off("done", onDone);
     });
     return;
   }
@@ -369,7 +267,17 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 function attachTerminal(ws: WebSocket, sessionId: string): void {
-  const term = spawnTerminal(sessionId);
+  const entry = spawnTerminal(sessionId);
+  const term = entry.pty;
+  entry.attachedSockets++;
+  entry.lastDetachedAt = null;
+
+  // Replay recent scrollback immediately so a reattaching socket (tab
+  // switch, page reload) shows the shell as it actually is instead of a
+  // blank screen until the next keypress.
+  if (entry.buffer && ws.readyState === ws.OPEN) {
+    ws.send(JSON.stringify({ type: "data", data: entry.buffer }));
+  }
 
   const onData = term.onData((data) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "data", data }));
@@ -405,8 +313,8 @@ function attachTerminal(ws: WebSocket, sessionId: string): void {
 
   ws.on("close", () => {
     onData.dispose();
-    term.kill();
-    terminals.delete(sessionId);
+    entry.attachedSockets--;
+    if (entry.attachedSockets === 0) entry.lastDetachedAt = Date.now();
   });
 }
 

@@ -1,16 +1,16 @@
-import { randomUUID } from "node:crypto";
 import { auth } from "@clerk/nextjs/server";
 
 /**
- * Mints a fresh session id + short-lived token for the real live terminal
- * (node-pty over WebSocket, see runtime-core/server.ts). Unlike
- * agent-stream's proxy route, there's no existing `run_sessions` row to
- * check ownership against — a terminal session isn't an eve task, it's
- * created fresh on demand, one PTY per browser tab (see runtime-core's own
- * comment on why reconnect isn't supported yet). So the session id is
- * generated HERE, server-side, after Clerk auth, rather than accepted from
- * the client — the calling user never gets to choose (and therefore never
- * gets to guess or collide with) another session's id.
+ * Mints a session id + short-lived token for the real live terminal
+ * (node-pty over WebSocket, see runtime-core/server.ts). The session id is
+ * derived from the org id, not randomly generated — one persistent shell
+ * per org, not one per browser tab/mount. That's what lets switching tabs
+ * (or closing and reopening this page) reattach to the SAME running shell
+ * instead of getting a blank one: runtime-core keys its PTY map by this id
+ * and no longer kills the PTY when a socket disconnects, only on a long
+ * idle timeout. Still generated server-side, after Clerk auth, so the
+ * calling user never gets to choose (and therefore never gets to guess or
+ * collide with) another org's terminal id.
  *
  * The long-lived RUNTIME_CORE_INTERNAL_TOKEN never reaches client-side JS —
  * only this narrow, expiring, session-id-bound token does.
@@ -28,7 +28,10 @@ export async function GET() {
   if (!clerkOrgId) return new Response("Select or create an organization first.", { status: 401 });
   if (!has({ role: "org:admin" })) return new Response("Only an organization admin can open a live terminal.", { status: 403 });
 
-  const sessionId = randomUUID();
+  // "term-" prefix: runtime-core strips it to recover the org id, which it
+  // needs to pick this org's persistent home directory on the EFS volume
+  // (see spawnTerminal in runtime-core/server.ts).
+  const sessionId = `term-${clerkOrgId}`;
 
   const res = await fetch(`${process.env.AGENT_RUNTIME_URL}/runtime-core/v1/terminal-token`, {
     method: "POST",
