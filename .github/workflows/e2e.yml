@@ -63,6 +63,19 @@ jobs:
           name: playwright-report
           path: e2e/playwright-report/
           retention-days: 14
+      # playwright-report/ alone doesn't include the raw trace/screenshot/
+      # video/error-context.md files Playwright's own failure output points
+      # to (e.g. "test-results/auth.setup.ts-.../error-context.md") — only
+      # test-results/ does. Every run has failed the same way since this
+      # workflow started with nothing but a text stack trace to debug from;
+      # upload this too so a failure is actually inspectable afterward.
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.creds.outputs.configured == 'true'
+        with:
+          name: test-results
+          path: e2e/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
       - name: Notify on failure
         if: failure() && steps.creds.outputs.configured == 'true' && vars.SLACK_WEBHOOK_URL != ''
         env:

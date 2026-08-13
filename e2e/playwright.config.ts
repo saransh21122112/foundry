@@ -12,6 +12,14 @@ export default defineConfig({
   use: {
     baseURL: process.env.BASE_URL ?? "http://localhost:3311",
     trace: "on-first-retry",
+    // Every scheduled run has failed the same way at auth.setup.ts since
+    // this workflow started (confirmed live via `gh run list` — not
+    // flaky), with only a text stack trace to go on. A screenshot/video of
+    // what the page actually looked like when Clerk's session never
+    // activated (CAPTCHA? error banner? blank page?) is the fastest way to
+    // find the real cause without guessing at it blindly.
+    screenshot: "only-on-failure",
+    video: "retain-on-failure",
   },
   projects: [
     {

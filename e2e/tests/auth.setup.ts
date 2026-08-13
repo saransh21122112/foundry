@@ -45,7 +45,27 @@ setup("authenticate", async ({ page }) => {
   // isn't necessarily populated the instant signIn() resolves — wait for
   // it explicitly rather than assuming it's already there (also confirmed
   // live: checking immediately threw "No active Clerk session").
-  await page.waitForFunction(() => Boolean(window.Clerk?.session?.id), { timeout: 15_000 });
+  try {
+    await page.waitForFunction(() => Boolean(window.Clerk?.session?.id), { timeout: 15_000 });
+  } catch (err) {
+    // clerk.signIn() above doesn't throw even when the session never
+    // activates — it awaits Clerk.setActive() internally and only surfaces
+    // an error if signIn.create() itself rejects, not if it completes
+    // without producing a session (e.g. the account needs a second
+    // factor/verification the password-only call above doesn't satisfy).
+    // Every run has failed at this exact line since the workflow started —
+    // a real, deterministic bug, not flakiness — so surface Clerk's own
+    // sign-in status instead of just "timed out" to make the next failure
+    // self-diagnosing rather than a second blind guess.
+    const status = await page.evaluate(() => ({
+      signInStatus: window.Clerk?.client?.signIn?.status ?? null,
+      firstFactorStatus: window.Clerk?.client?.signIn?.firstFactorVerification?.status ?? null,
+      secondFactorStatus: window.Clerk?.client?.signIn?.secondFactorVerification?.status ?? null,
+    }));
+    throw new Error(
+      `Clerk session never activated after sign-in (${JSON.stringify(status)}). Original error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   await page.evaluate(async (id) => {
     const sessionId = window.Clerk!.session!.id;
     await window.Clerk!.setActive({ session: sessionId, organization: id });
