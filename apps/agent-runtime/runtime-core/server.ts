@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import * as path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import * as pty from "node-pty";
@@ -93,18 +93,30 @@ interface TerminalEntry {
 }
 const terminals = new Map<string, TerminalEntry>();
 
-// Persistent home per org, not this container's own ephemeral filesystem —
-// lives on the same EFS volume eve's own workflow state already uses (see
-// WorkflowStateFs / workflowAccessPoint in infra/lib/foundry-stack.ts,
-// mounted at .eve/.workflow-data relative to this process's cwd). That's
-// what makes Claude Code's config/credentials, any plugins installed from
-// inside this terminal, and shell history survive a container restart,
-// redeploy, or the user just logging out and back in — none of which
-// should wipe a shell that's conceptually "this org's own box".
-// sessionId is "term-<orgId>" (see apps/web's terminal-token route); any
-// other shape falls back to a scratch dir under /tmp rather than guessing.
+// Persistent home per PERSON (org admin), not this container's own
+// ephemeral filesystem — lives on the same EFS volume eve's own workflow
+// state already uses (see WorkflowStateFs / workflowAccessPoint in
+// infra/lib/foundry-stack.ts, mounted at .eve/.workflow-data relative to
+// this process's cwd). That's what makes Claude Code's config/
+// credentials, any plugins installed from inside this terminal, and shell
+// history survive a container restart, redeploy, or the user just logging
+// out and back in.
+//
+// Originally one $HOME per ORG (every admin sharing it) — confirmed live
+// that this broke personal `claude login`: whoever ran it signed in for
+// every other admin sharing that same $HOME, and the next person to log
+// in just clobbered it. Per-person keeps everything else about the
+// original fix (survives a tab switch/restart/redeploy) while giving each
+// admin their own place to run their own login.
+//
+// sessionId is "term-<orgId>:<userId>" (see apps/web's terminal-token
+// route); any other shape falls back to a scratch dir under /tmp rather
+// than guessing.
 function terminalHomeDir(sessionId: string): string {
-  const orgId = sessionId.startsWith("term-") ? sessionId.slice("term-".length) : null;
+  const rest = sessionId.startsWith("term-") ? sessionId.slice("term-".length) : null;
+  const sep = rest?.indexOf(":") ?? -1;
+  const orgId = rest && sep > 0 ? rest.slice(0, sep) : null;
+  const userId = rest && sep > 0 ? rest.slice(sep + 1) : null;
   const base = process.env.EVE_WORKFLOW_DATA_DIR ?? ".eve/.workflow-data";
   // Must be absolute, not just resolvable-as-cwd: this becomes $HOME, and
   // unlike pty.spawn's own `cwd` option (which the OS resolves against the
@@ -113,9 +125,10 @@ function terminalHomeDir(sessionId: string): string {
   // path, so anything joining "$(pwd)/$HOME" (confirmed live: Claude Code
   // itself, looking for its plugin marketplace file) silently doubled the
   // whole terminal-homes/<org> segment into a nested, growing path.
-  const dir = orgId
-    ? path.resolve(base, "terminal-homes", orgId)
-    : path.resolve("/tmp", "terminal-homes", sessionId);
+  const dir =
+    orgId && userId
+      ? path.resolve(base, "terminal-homes", orgId, userId)
+      : path.resolve("/tmp", "terminal-homes", sessionId);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -148,7 +161,19 @@ function spawnTerminal(sessionId: string): TerminalEntry {
   // /api/terminal-token). Every OTHER secret (Clerk, Stripe, DB creds,
   // etc.) stays excluded; this is the one exception, not a reopening of
   // the original leak.
-  if (process.env.ANTHROPIC_API_KEY) safeEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  //
+  // Skipped once this person has their own Claude Code login: the CLI
+  // always prefers an ANTHROPIC_API_KEY env var over an OAuth login
+  // (confirmed live: "claude.ai login... takes precedence is disabled
+  // because ANTHROPIC_API_KEY... is set"), so leaving the org's shared key
+  // in place unconditionally would silently override a personal `claude
+  // login` every single time this shell respawns. Presence of Linux
+  // Claude Code's own credentials file (~/.claude/.credentials.json — see
+  // its own docs) is exactly "this person already logged in personally",
+  // not a guess. First run still gets the shared key so `claude` works
+  // with zero setup; `claude login` from then on sticks for that person.
+  const hasPersonalLogin = existsSync(path.join(home, ".claude", ".credentials.json"));
+  if (process.env.ANTHROPIC_API_KEY && !hasPersonalLogin) safeEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   const term = pty.spawn(shell, [], {
     name: "xterm-color",
     cols: 80,

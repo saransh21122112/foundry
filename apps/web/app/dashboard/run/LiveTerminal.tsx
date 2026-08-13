@@ -14,15 +14,17 @@ import "@xterm/xterm/css/xterm.css";
  * own host. Scoped to ops-manager only for now — see the plan/server.ts's
  * own comments on why the other 12 departments aren't wired to this.
  *
- * One PTY per org, not per mount: connecting fetches a session id + short-
- * lived token (GET /api/terminal-token) and opens the WebSocket directly
- * against runtime-core on the same ALB this app is already served from —
- * no proxy hop needed for the byte stream itself, just for minting the
- * token (see that route's own comment on why a raw WS proxy wasn't built).
- * The session id is stable per org, so unmounting (switching tabs, a page
- * reload) just detaches the socket — the shell keeps running server-side
- * and reattaches with its recent scrollback replayed on remount, instead
- * of looking wiped.
+ * One PTY per person, not per mount: connecting fetches a session id +
+ * short-lived token (GET /api/terminal-token) and opens the WebSocket
+ * directly against runtime-core on the same ALB this app is already
+ * served from — no proxy hop needed for the byte stream itself, just for
+ * minting the token (see that route's own comment on why a raw WS proxy
+ * wasn't built). The session id is stable per org+user, so unmounting
+ * (switching tabs, a page reload) just detaches the socket — the shell
+ * keeps running server-side and reattaches with its recent scrollback
+ * replayed on remount, instead of looking wiped. Per-person (not just
+ * per-org) also means each admin gets their own $HOME to run their own
+ * `claude login` in, without clobbering anyone else's.
  */
 export function LiveTerminal() {
   const containerRef = useRef<HTMLDivElement>(null);
