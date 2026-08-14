@@ -7,6 +7,17 @@ import { test, expect } from "@playwright/test";
 // flakier, still-being-investigated path — so this stays a clean signal on
 // the base approval-resume mechanism itself.
 test("a gated tool call parks for approval and resumes once approved", async ({ page }) => {
+  // This test's own step timeouts (60s + 15s + 15s + 45s + 45s = 180s)
+  // already assume a real end-to-end flow — an actual LLM call to decide
+  // on delegation, a real tool execution, another real LLM-driven resume
+  // after approval — but nothing had ever overridden Playwright's default
+  // 30s *overall* test timeout to match. Confirmed live: the test got
+  // killed mid-resume with zero visible change on screen (no error, no
+  // loading state, just cut off), well within every individual step's own
+  // declared budget. Not a bug in the resume mechanism — a missing
+  // test-level timeout for a test that was always going to need one.
+  test.setTimeout(240_000);
+
   await page.goto("/dashboard/departments");
   // <section class="settings-section">, not div.panel — that class is used
   // elsewhere (e.g. the approval queue below), not on this page.
