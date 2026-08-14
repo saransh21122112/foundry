@@ -7,19 +7,31 @@ import { requireOrgAdmin } from "@/lib/authz";
 import { resumeEveApproval } from "@/lib/eve-client";
 
 /**
- * Resolves a pending approval_requests row AND resumes the actual parked
- * eve agent session — see lib/eve-client.ts for the resume mechanics
- * (recovering `continuationToken` via a stream tail-read, then a plain
- * "approve"/"deny" follow-up message; written against
+ * Resolves a pending approval_requests row, then kicks off (without
+ * awaiting) the actual resume of the parked eve agent session — see
+ * lib/eve-client.ts for the resume mechanics (recovering
+ * `continuationToken` via a stream tail-read, then a plain "approve"/"deny"
+ * follow-up message; written against
  * node_modules/eve/docs/concepts/sessions-runs-and-streaming.md, not
  * guessed). Admin-only (lib/authz.ts) — approving spend or a gated action
  * isn't something any signed-in org member should be able to do.
  *
- * Order matters: our own DB row is updated first (source of truth for
- * "was this decided, and by whom"), then the session resume is attempted.
- * If the resume call fails — stale session, agent-runtime unreachable —
- * the decision is still recorded; the error surfaces to the admin rather
- * than silently leaving a parked session dangling.
+ * Used to `await resumeEveApproval` before returning. Confirmed live: for a
+ * real multi-step delegation + tool-execution resume, that whole round trip
+ * can take longer than CloudFront's 60s origin response timeout (see
+ * infra/lib/foundry-stack.ts's own comment on this ceiling — not
+ * configurable without an AWS support quota increase), so the admin's
+ * browser got a bare 504 with no way to tell whether the resume actually
+ * went through. The DB row is the real source of "was this decided, and by
+ * whom" and is updated FIRST, synchronously — the approvals list is
+ * already filtered to `status: "pending"`, so the row disappears from the
+ * queue the instant this returns, regardless of how long the underlying
+ * agent resume takes. The resume itself keeps running after the response
+ * is sent (this is a persistent ECS server, not a serverless function that
+ * gets frozen on return) — failures are still real, just no longer
+ * blocking or surfaced synchronously to the admin; they're logged
+ * server-side instead. A visible "resume failed" indicator in the UI is a
+ * reasonable follow-up, not built here.
  */
 export async function resolveApproval(formData: FormData) {
   const { userId, clerkOrgId, orgSlug, getToken } = await requireOrgAdmin();
@@ -56,7 +68,13 @@ export async function resolveApproval(formData: FormData) {
 
   const token = await getToken();
   if (!token) throw new Error("Could not obtain a session token to resume the agent.");
-  await resumeEveApproval(updated.agentRunId, decision, token);
+
+  // Not awaited — see the function doc for why. Errors here can no longer
+  // reach the admin synchronously, so log with enough context to find the
+  // row again (agentRunId) instead of letting them vanish silently.
+  resumeEveApproval(updated.agentRunId, decision, token).catch((err) => {
+    console.error(`[resolveApproval] background resume failed for session ${updated.agentRunId} (decision: ${decision}):`, err);
+  });
 
   revalidatePath("/dashboard/approvals");
 }
