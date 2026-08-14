@@ -40,10 +40,21 @@ test("a gated tool call parks for approval and resumes once approved", async ({ 
     await startNewTaskButton.click();
   }
 
+  // Describe the outcome, don't name the tool: the root orchestrator's own
+  // system prompt (agent/instructions.default.ts) says it never does
+  // department work itself, only delegates — but naming a specific
+  // function ("call save_project_file with...") seems to prime it to
+  // reason about whether IT has that function instead, and it answered
+  // directly instead of delegating (confirmed live: "There's no
+  // save_project_file function available to me or to the eng-lead
+  // subagent" — a refusal from the root, not eng-lead, which does have
+  // that tool at agent/subagents/eng-lead/tools/save_project_file.ts). A
+  // natural-language task description leaves tool selection to eng-lead's
+  // own judgment, same as a real user would phrase it.
   const slug = `e2e-${Date.now()}`;
   await page
     .getByPlaceholder(/Research two competitors/)
-    .fill(`eng-lead: call save_project_file with projectSlug ${slug}, relativePath index.html, contents <h1>e2e</h1>. Just save it.`);
+    .fill(`eng-lead: save a new project file named index.html with the contents <h1>e2e</h1>, in a new project called ${slug}.`);
   await page.getByRole("button", { name: "Run", exact: true }).click();
 
   await expect(page.getByText("Paused — this needs your approval")).toBeVisible({ timeout: 60_000 });
