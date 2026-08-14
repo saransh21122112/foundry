@@ -52,7 +52,15 @@ test("a gated tool call parks for approval and resumes once approved", async ({ 
   const approvalRow = page.locator("div.panel", { hasText: "save_project_file" }).first();
   await expect(approvalRow).toBeVisible({ timeout: 15_000 });
   await approvalRow.getByRole("button", { name: "Approve" }).click();
-  await expect(approvalRow).toBeHidden({ timeout: 15_000 });
+  // Same class of wait as "Paused" above (60s) — resolveApproval's resume
+  // call is a real end-to-end round trip (fetch the continuation token,
+  // then a follow-up that drives another real LLM turn + tool execution,
+  // see lib/eve-client.ts), not a cheap DB toggle. Confirmed live: the
+  // trace showed the Approve click's own POST still in flight (status -1,
+  // no error) when the old 15s timeout gave up — genuinely slow, not
+  // stuck, so match the timeout to the other real-agent-turn waits here
+  // instead of the DB-only interactions (which stay at 15s).
+  await expect(approvalRow).toBeHidden({ timeout: 60_000 });
 
   await page.goto("/dashboard/activity");
   await expect(page.getByText("save_project_file").first()).toBeVisible({ timeout: 45_000 });
