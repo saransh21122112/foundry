@@ -48,3 +48,42 @@ test("Connect GitHub redirects to a correctly-formed GitHub authorize URL", asyn
   expect(url.searchParams.get("redirect_uri")).toContain("/dashboard/connections/github/callback");
   expect(url.searchParams.get("state")).toBeTruthy();
 });
+
+// Same reasoning as the GitHub test above — checks the redirect is
+// correctly formed, doesn't complete a real Google login.
+test("Connect Google Calendar redirects to a correctly-formed Google authorize URL", async ({ page }) => {
+  await page.goto("/dashboard/connections");
+
+  const disconnectButton = page.getByRole("button", { name: "Disconnect" });
+  if (await disconnectButton.isVisible().catch(() => false)) {
+    await disconnectButton.click();
+    await expect(page.getByText("No Google account connected yet.")).toBeVisible({ timeout: 10_000 });
+  }
+
+  const [request] = await Promise.all([
+    page.waitForRequest(/accounts\.google\.com\/o\/oauth2\/v2\/auth/, { timeout: 10_000 }),
+    page.getByRole("button", { name: "Connect Google Calendar" }).click(),
+  ]);
+
+  const url = new URL(request.url());
+  expect(url.hostname).toBe("accounts.google.com");
+  expect(url.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/calendar.readonly");
+  expect(url.searchParams.get("redirect_uri")).toContain("/dashboard/connections/google-calendar/callback");
+  expect(url.searchParams.get("state")).toBeTruthy();
+});
+
+// Doesn't need a real Telegram account — generating the code is entirely
+// in-app (no external redirect), unlike GitHub/Google above.
+test("Telegram link code can be generated", async ({ page }) => {
+  await page.goto("/dashboard/connections");
+
+  const generateNew = page.getByRole("button", { name: "Generate a new code" });
+  const getCode = page.getByRole("button", { name: "Get a link code" });
+  if (await generateNew.isVisible().catch(() => false)) {
+    await generateNew.click();
+  } else {
+    await getCode.click();
+  }
+
+  await expect(page.getByText(/\/link \S+/)).toBeVisible({ timeout: 10_000 });
+});
