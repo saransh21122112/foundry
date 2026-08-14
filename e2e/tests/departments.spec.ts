@@ -4,7 +4,10 @@ test("toggling a department on persists across a reload", async ({ page }) => {
   await page.goto("/dashboard/departments");
   await expect(page.getByRole("heading", { name: "Departments" })).toBeVisible();
 
-  const researcherCard = page.locator("div.panel", { hasText: "researcher" });
+  // Each department renders as <section class="settings-section">, not
+  // div.panel (confirmed live: the old selector matched nothing on this
+  // page, timing out — that class is used elsewhere, e.g. calendar/tasks).
+  const researcherCard = page.locator("section.settings-section", { hasText: "researcher" });
   const checkbox = researcherCard.getByRole("checkbox", { name: "Turn this department on" });
   const wasOn = await checkbox.isChecked();
 
@@ -14,7 +17,7 @@ test("toggling a department on persists across a reload", async ({ page }) => {
   await expect(page.getByText("Saved.")).toBeVisible();
 
   await page.reload();
-  const reloadedCard = page.locator("div.panel", { hasText: "researcher" });
+  const reloadedCard = page.locator("section.settings-section", { hasText: "researcher" });
   await expect(reloadedCard.getByRole("checkbox", { name: "Turn this department on" })).toBeChecked();
 
   // Restore original state so repeated CI runs don't drift the org's config.

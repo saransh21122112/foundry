@@ -8,7 +8,9 @@ import { test, expect } from "@playwright/test";
 // the base approval-resume mechanism itself.
 test("a gated tool call parks for approval and resumes once approved", async ({ page }) => {
   await page.goto("/dashboard/departments");
-  const engLeadCard = page.locator("div.panel", { hasText: "eng-lead" });
+  // <section class="settings-section">, not div.panel — that class is used
+  // elsewhere (e.g. the approval queue below), not on this page.
+  const engLeadCard = page.locator("section.settings-section", { hasText: "eng-lead" });
   const draftsOnly = engLeadCard.getByRole("radio", { name: /Drafts only/ });
   const wasDraftsOnly = await draftsOnly.isChecked();
   if (!wasDraftsOnly) {
@@ -18,7 +20,10 @@ test("a gated tool call parks for approval and resumes once approved", async ({ 
     await expect(page.getByText("Saved.")).toBeVisible();
   }
 
-  await page.goto("/dashboard/run");
+  // The chat composer moved from /dashboard/run to /dashboard/tasks —
+  // /dashboard/run is a real node-pty shell now (see LiveTerminal.tsx),
+  // not a task-submission form.
+  await page.goto("/dashboard/tasks");
   const startNewTaskButton = page.getByRole("button", { name: "Start a new task" });
   if (await startNewTaskButton.isVisible().catch(() => false)) {
     await startNewTaskButton.click();

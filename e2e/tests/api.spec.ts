@@ -18,6 +18,14 @@ test("an unauthenticated visitor sees a sign-in prompt, not real org data", asyn
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.goto("/dashboard/connections");
-  await expect(page.getByText(/Sign in and select or create an organization/)).toBeVisible();
+  // Unlike every other test here, this context is fresh and cookie-less —
+  // it has to pay for Clerk's own "dev browser" handshake redirect chain
+  // (a round trip through clerk.accounts.dev to set the dev-browser cookie,
+  // see auth.setup.ts's own notes on this) before the page can even render,
+  // a cost the storageState-sharing tests never pay. The default 5s expect
+  // timeout was too tight for that (confirmed live: "element(s) not found"
+  // at exactly 5000ms) — give it the same order of headroom as this
+  // suite's other page-load assertions.
+  await expect(page.getByText(/Sign in and select or create an organization/)).toBeVisible({ timeout: 15_000 });
   await context.close();
 });
